@@ -81,6 +81,7 @@ VCB/
 │   ├── loop.vcb
 │   └── smoke.vcb
 ├── CMakeLists.txt
+├── build.md
 └── LICENSE
 ```
 
@@ -157,36 +158,6 @@ phi copy
 
 The IR is intentionally small so that it can provide a clean boundary between the Vayu frontend and the native backend.
 
-## Build
-
-### CMake
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-```
-
-### Visual Studio
-
-1. Create or open the C++ project in Visual Studio.
-2. Use **C++20**.
-3. Add the source files from `src/` and `include/`.
-4. Add `test/tests.cpp` as the test target if required.
-5. Build using **Release | x64**.
-
-Recommended compiler settings for optimized MSVC builds:
-
-```text
-/std:c++20
-/O2
-/GL
-/fp:fast
-/arch:AVX2
-/MT
-/LTCG
-/W4
-```
-
 ## Usage
 
 VCB can read IR from a file or from standard input.
@@ -217,6 +188,8 @@ For example:
 vcb input.vcb -o out.s
 gcc out.s -o out
 ```
+
+For complete installation, compiler, CMake, Visual Studio, testing, and troubleshooting instructions, see **[BUILD.md](build.md)**.
 
 ## Testing
 
@@ -297,7 +270,11 @@ Before contributing, please check the existing source structure and tests to kee
 
 ## License
 
-VCB is released under the license included in this repository.
+VCB is released under the **Apache License 2.0**.
+
+See the license included in the repository:
+
+[LICENSE](https://github.com/NotY215/VCB/blob/master/LICENSE "LICENSE")
 
 ## Related Project
 
