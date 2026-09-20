@@ -144,6 +144,11 @@ namespace vcb {
             }
         }
 
+        // movaps / movapd are the correct wide moves for xmm-to-xmm.
+        inline const char* movapMnem(Ty t) {
+            return t == Ty::F32 ? "movaps" : "movapd";
+        }
+
         void loadFloat(std::ostream& o, const Frame& fr, const Operand& op,
             Ty t, const char* dst)
         {
@@ -159,7 +164,7 @@ namespace vcb {
             if (l.kind == Loc::Reg) {
                 const char* src = poolFloatName(l.idx);
                 if (std::string(src) != dst)
-                    o << "    movap" << suf << " " << dst << ", " << src << "\n";
+                    o << "    " << movapMnem(t) << " " << dst << ", " << src << "\n";
             }
             else {
                 int off = slotOffset(fr, l.idx);
@@ -178,7 +183,7 @@ namespace vcb {
             if (l.kind == Loc::Reg) {
                 const char* dst = poolFloatName(l.idx);
                 if (std::string(dst) != src)
-                    o << "    movap" << suf << " " << dst << ", " << src << "\n";
+                    o << "    " << movapMnem(t) << " " << dst << ", " << src << "\n";
             }
             else {
                 int off = slotOffset(fr, l.idx);
@@ -562,21 +567,23 @@ namespace vcb {
 
     } // anon
 
-    // ============================================================
-    // Entry
-    // ============================================================
-    void codegen(Module& m, std::ostream& out) {
-        out << ".intel_syntax noprefix\n";
-        out << ".text\n\n";
+// ============================================================
+// Entry
+// ============================================================
+    void codegen(Module& m, std::ostream& finalOut) {
+        finalOut << ".intel_syntax noprefix\n";
+        finalOut << ".text\n\n";
 
         for (auto& fp : m.funcs) {
             Function& f = *fp;
             const std::string fnSym = symName(f.name);
 
+            std::ostringstream fnBuf;
+            std::ostream& out = fnBuf;
+
             Frame fr;
             fr.ra = regalloc(f);
 
-            // Callee-saved offsets: [rbp-8], [rbp-16], ...
             for (size_t i = 0; i < fr.ra.usedCalleeSaved.size(); ++i)
                 fr.csOfs[fr.ra.usedCalleeSaved[i]] = -(int)(8 * (i + 1));
 
@@ -584,7 +591,6 @@ namespace vcb {
             int spillBytes = 8 * fr.ra.spillCount;
             int cursor = -(csBytes + spillBytes);
 
-            // Allocas below spill area
             for (auto& b : f.blocks) {
                 for (auto& in : b.instrs) {
                     if (in.op == Op::Alloc) {
@@ -608,13 +614,11 @@ namespace vcb {
             if (fr.totalSize)
                 out << "    sub rsp, " << fr.totalSize << "\n";
 
-            // Save callee-saved registers
             for (auto& kv : fr.csOfs) {
                 const char* r = INT_POOL[kv.first].r64;
                 out << "    mov qword ptr [rbp" << kv.second << "], " << r << "\n";
             }
 
-            // Store incoming ABI params into their locations
             static const char* argReg64[6] = { "rdi","rsi","rdx","rcx","r8","r9" };
             static const char* argReg32[6] = { "edi","esi","edx","ecx","r8d","r9d" };
             static const char* argReg16[6] = { "di","si","dx","cx","r8w","r9w" };
@@ -658,13 +662,16 @@ namespace vcb {
 
             // ---- Epilogue ----
             out << epilogue << ":\n";
-            // Restore callee-saved registers
             for (auto& kv : fr.csOfs) {
                 const char* r = INT_POOL[kv.first].r64;
                 out << "    mov " << r << ", qword ptr [rbp" << kv.second << "]\n";
             }
             out << "    leave\n";
-            out << "    ret\n\n";
+            out << "    ret\n";
+
+            // ---- Peephole + flush ----
+            std::string cleaned = peepholeText(fnBuf.str());
+            finalOut << cleaned << "\n";
         }
     }
 

@@ -221,19 +221,92 @@ void simplify(Function& f) {
 }
 
 // ------------------------------------------------------------
+// Copy coalescing / propagation.
+//
+// For every `%d = copy %a` where %a has no other use anywhere,
+// replace all uses of %d with %a and delete the copy. This is
+// the IR-level equivalent of register coalescing: the emitter
+// then sees one value where it saw two.
+//
+// Iterates to fixpoint. O(n) per sweep; typically 2-3 sweeps
+// for functions under a few hundred instructions.
+// ------------------------------------------------------------
+static void coalesceCopiesFn(Function& f) {
+    auto countUses = [&](ValueId v) {
+        int n = 0;
+        for (auto& b : f.blocks)
+            for (auto& in : b.instrs) {
+                if (!in.a.isImm && in.a.val == v) ++n;
+                if (!in.b.isImm && in.b.val == v) ++n;
+                for (auto& pa : in.phiArgs) if (pa.first == v) ++n;
+            }
+        return n;
+        };
+
+    auto renameUses = [&](ValueId from, ValueId to) {
+        for (auto& b : f.blocks)
+            for (auto& in : b.instrs) {
+                if (!in.a.isImm && in.a.val == from) in.a.val = to;
+                if (!in.b.isImm && in.b.val == from) in.b.val = to;
+                for (auto& pa : in.phiArgs)
+                    if (pa.first == from) pa.first = to;
+            }
+        };
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto& b : f.blocks) {
+            for (auto& in : b.instrs) {
+                if (in.op != Op::Copy)  continue;
+                if (in.a.isImm)         continue;
+                if (in.dst == NOVAL)    continue;
+
+                ValueId src = in.a.val;
+                ValueId dst = in.dst;
+                if (src == dst) { in.op = Op::Nop; changed = true; break; }
+
+                // Only safe if src has exactly this one use.
+                if (countUses(src) != 1) continue;
+
+                renameUses(dst, src);
+                in.op = Op::Nop;
+                in.dst = NOVAL;
+                changed = true;
+                break;
+            }
+            if (changed) break;
+        }
+    }
+
+    // Sweep Nops out of every block.
+    for (auto& b : f.blocks) {
+        std::vector<Instr> keep;
+        keep.reserve(b.instrs.size());
+        for (auto& in : b.instrs)
+            if (in.op != Op::Nop) keep.push_back(std::move(in));
+        b.instrs = std::move(keep);
+    }
+}
+
+// ------------------------------------------------------------
 // Driver.
 // ------------------------------------------------------------
 void optimize(Module& m) {
     for (auto& fp : m.funcs) {
         Function& f = *fp;
-        // Iterate until convergence
         for (int round = 0; round < 4; ++round) {
             simplify(f);
             constantFold(f);
             commonSubexprElim(f);
+            coalesceCopiesFn(f);
             deadCodeElim(f);
         }
     }
+}
+void coalesceCopies(Module& m) {
+    for (auto& fp : m.funcs)
+        coalesceCopiesFn(*fp);
 }
 
 } // namespace vcb

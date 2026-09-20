@@ -18,14 +18,15 @@ set(VCB_CORE_SOURCES
     src/codegen.cpp
     src/parser.cpp
     src/regalloc.cpp
+    src/peephole.cpp
 )
 
 # --- vcb (main executable) ---
-add_executable(vcb src/main.cpp ${VCB_CORE_SOURCES})
+add_executable(vcb src/main.cpp ${VCB_CORE_SOURCES} "src/peephole.cpp")
 target_include_directories(vcb PRIVATE include)
 
 # --- vcb-tests ---
-add_executable(vcb-tests test/tests.cpp ${VCB_CORE_SOURCES})
+add_executable(vcb-tests test/tests.cpp ${VCB_CORE_SOURCES} "src/peephole.cpp")
 target_include_directories(vcb-tests PRIVATE include)
 
 # --- Compiler-specific flags ---

@@ -1,13 +1,25 @@
 // VCB — Vayu Compiler Backend
 // parser.cpp — IR text -> vcb::Module
+//
+// Phase 4c: symbolic value names.
+//   * %1, %2, ...   -> fast numeric path via std::from_chars.
+//   * %x, %foo, %_t -> interned via Module::namePool, mapped per-function
+//                      through Function::namedValues.
+//
+// Both forms are function-scoped; numeric and symbolic names may not
+// collide for the same value (same rule as LLVM IR / QBE IL).
+
 #include "vcb.hpp"
-#include <sstream>
-#include <string>
-#include <vector>
-#include <utility>
+
+#include <charconv>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace vcb {
 
@@ -22,8 +34,7 @@ namespace vcb {
 
         std::string stripComment(const std::string& s) {
             for (size_t i = 0; i < s.size(); ++i) {
-                if (s[i] == ';' || s[i] == '#')
-                    return s.substr(0, i);
+                if (s[i] == ';' || s[i] == '#') return s.substr(0, i);
                 if (s[i] == '/' && i + 1 < s.size() && s[i + 1] == '/')
                     return s.substr(0, i);
             }
@@ -43,24 +54,64 @@ namespace vcb {
             return true;
         }
 
-        bool parseValueTok(const std::string& t, ValueId& out) {
+        // ------------------------------------------------------------
+        // Value token parsing — Phase 4c.
+        // ------------------------------------------------------------
+        //
+        // Numeric fast path:  %42       -> from_chars, no allocation.
+        // Symbolic path:      %foo      -> intern + per-function map.
+        //
+        bool parseValueTok(const std::string& t, Module* mod, Function* fn,
+            ValueId& out)
+        {
             if (t.empty() || t[0] != '%') return false;
-            out = (ValueId)std::strtoul(t.c_str() + 1, nullptr, 10);
+
+            const char* begin = t.data() + 1;
+            const char* end = t.data() + t.size();
+
+            // Fast path: all digits -> numeric SSA id.
+            if (begin < end && std::isdigit((unsigned char)*begin)) {
+                uint32_t v = 0;
+                auto [ptr, ec] = std::from_chars(begin, end, v);
+                if (ec == std::errc() && ptr == end) {
+                    out = v;
+                    return true;
+                }
+                // Fall through: mixed alphanumeric like "%1a" is a symbolic name.
+            }
+
+            // Symbolic name. Requires module context.
+            if (!mod || !fn) return false;
+            uint32_t nameId = mod->namePool.intern(
+                std::string_view(begin, static_cast<size_t>(end - begin)));
+
+            auto it = fn->namedValues.find(nameId);
+            if (it != fn->namedValues.end()) {
+                out = it->second;
+                return true;
+            }
+            ValueId fresh = fn->nextValue++;
+            fn->namedValues[nameId] = fresh;
+            out = fresh;
             return true;
         }
 
         bool parseImmTok(const std::string& t, int64_t& out) {
             if (t.empty()) return false;
-            char* end = nullptr;
-            long long v = std::strtoll(t.c_str(), &end, 0);
-            if (end == t.c_str()) return false;
+            const char* begin = t.data();
+            const char* end = t.data() + t.size();
+            int64_t v = 0;
+            auto [ptr, ec] = std::from_chars(begin, end, v);
+            if (ec != std::errc() || ptr != end) return false;
             out = v;
             return true;
         }
 
-        bool parseOperand(const std::string& t, Operand& out) {
+        bool parseOperand(const std::string& t, Module* mod, Function* fn,
+            Operand& out)
+        {
             ValueId v;
-            if (parseValueTok(t, v)) { out = Operand::V(v); return true; }
+            if (parseValueTok(t, mod, fn, v)) { out = Operand::V(v); return true; }
             int64_t i;
             if (parseImmTok(t, i)) { out = Operand::I(i); return true; }
             return false;
@@ -114,7 +165,9 @@ namespace vcb {
             std::string line = trim(stripComment(raw));
             if (line.empty()) continue;
 
-            // ---- Function start ----
+            // ----------------------------------------------------
+            // Function header
+            // ----------------------------------------------------
             {
                 std::string rest = line;
                 bool exported = false;
@@ -123,9 +176,8 @@ namespace vcb {
                     rest = trim(rest.substr(7));
                 }
                 if (rest.rfind("function ", 0) == 0) {
-                    rest = trim(rest.substr(9));   // "i32 plus3(i32 %1, i32 %2, i32 %3) {"
+                    rest = trim(rest.substr(9));
 
-                    // Locate the parameter parens in the WHOLE line.
                     size_t lp = rest.find('(');
                     size_t rp = (lp == std::string::npos)
                         ? std::string::npos
@@ -136,10 +188,9 @@ namespace vcb {
                         return false;
                     }
 
-                    std::string before = trim(rest.substr(0, lp));   // "i32 plus3"
+                    std::string before = trim(rest.substr(0, lp));
                     std::string plist = rest.substr(lp + 1, rp - lp - 1);
 
-                    // Split "i32 plus3" on the LAST space → retty / fname.
                     size_t sp = before.rfind(' ');
                     if (sp == std::string::npos) {
                         err = "line " + std::to_string(lineNo)
@@ -159,6 +210,10 @@ namespace vcb {
                     }
                     fn->ret = rt;
 
+                    // Set cur BEFORE parsing params so symbolic names
+                    // like %x in the parameter list can be interned.
+                    cur = fn.get();
+
                     if (!plist.empty()) {
                         for (auto& part : splitCommas(plist)) {
                             if (part.empty()) continue;
@@ -167,13 +222,14 @@ namespace vcb {
                             ps >> pty >> pname;
                             Ty pt;
                             if (!parseTypeTok(pty, pt)) {
-                                err = "line " + std::to_string(lineNo) + ": bad param type";
+                                err = "line " + std::to_string(lineNo)
+                                    + ": bad param type";
                                 return false;
                             }
                             ValueId pid;
-                            if (!parseValueTok(pname, pid)) {
+                            if (!parseValueTok(pname, &m, cur, pid)) {
                                 err = "line " + std::to_string(lineNo)
-                                    + ": param needs value id like %1";
+                                    + ": param needs '%name' or '%N'";
                                 return false;
                             }
                             fn->params.push_back({ pt, pid });
@@ -181,7 +237,6 @@ namespace vcb {
                         }
                     }
 
-                    cur = fn.get();
                     m.funcs.push_back(std::move(fn));
                     curBlock = nullptr;
                     continue;
@@ -199,6 +254,9 @@ namespace vcb {
                 return false;
             }
 
+            // ----------------------------------------------------
+            // Block label
+            // ----------------------------------------------------
             if (line.back() == ':' && line[0] != '%') {
                 std::string lname = trim(line.substr(0, line.size() - 1));
                 Block b;
@@ -215,8 +273,13 @@ namespace vcb {
                 curBlock = &cur->blocks.back();
             }
 
+            // ----------------------------------------------------
+            // Instruction
+            // ----------------------------------------------------
             Instr ins;
             std::string work = line;
+
+            // Optional destination: %dst = op ...
             if (work[0] == '%') {
                 size_t eq = work.find('=');
                 if (eq == std::string::npos) {
@@ -225,7 +288,7 @@ namespace vcb {
                 }
                 std::string dstTok = trim(work.substr(0, eq));
                 ValueId dv;
-                if (!parseValueTok(dstTok, dv)) {
+                if (!parseValueTok(dstTok, &m, cur, dv)) {
                     err = "line " + std::to_string(lineNo) + ": bad dst";
                     return false;
                 }
@@ -238,7 +301,8 @@ namespace vcb {
             std::string opName;
             ws >> opName;
             if (!parseOpName(opName, ins.op)) {
-                err = "line " + std::to_string(lineNo) + ": unknown op '" + opName + "'";
+                err = "line " + std::to_string(lineNo)
+                    + ": unknown op '" + opName + "'";
                 return false;
             }
             std::string rest;
@@ -255,13 +319,15 @@ namespace vcb {
                     rs >> tyTok >> valTok;
                     Ty t;
                     if (!parseTypeTok(tyTok, t)) {
-                        err = "line " + std::to_string(lineNo) + ": ret needs type";
+                        err = "line " + std::to_string(lineNo)
+                            + ": ret needs type";
                         return false;
                     }
                     ins.ty = t;
                     if (!valTok.empty()) {
-                        if (!parseOperand(valTok, ins.a)) {
-                            err = "line " + std::to_string(lineNo) + ": bad ret operand";
+                        if (!parseOperand(valTok, &m, cur, ins.a)) {
+                            err = "line " + std::to_string(lineNo)
+                                + ": bad ret operand";
                             return false;
                         }
                     }
@@ -272,7 +338,8 @@ namespace vcb {
             case Op::Jmp: {
                 ins.label = trim(rest);
                 if (ins.label.empty()) {
-                    err = "line " + std::to_string(lineNo) + ": jmp needs label";
+                    err = "line " + std::to_string(lineNo)
+                        + ": jmp needs label";
                     return false;
                 }
                 break;
@@ -281,11 +348,13 @@ namespace vcb {
             case Op::Jnz: {
                 auto parts = splitCommas(rest);
                 if (parts.size() != 3) {
-                    err = "line " + std::to_string(lineNo) + ": jnz needs cond, then, else";
+                    err = "line " + std::to_string(lineNo)
+                        + ": jnz needs cond, then, else";
                     return false;
                 }
-                if (!parseOperand(parts[0], ins.a)) {
-                    err = "line " + std::to_string(lineNo) + ": bad jnz cond";
+                if (!parseOperand(parts[0], &m, cur, ins.a)) {
+                    err = "line " + std::to_string(lineNo)
+                        + ": bad jnz cond";
                     return false;
                 }
                 ins.ty = Ty::I32;
@@ -307,6 +376,7 @@ namespace vcb {
                     rt = Ty::Void;
                 }
                 ins.ty = rt;
+
                 size_t lp = symPart.find('(');
                 std::string sym = symPart;
                 std::string argList;
@@ -317,12 +387,14 @@ namespace vcb {
                         argList = symPart.substr(lp + 1, rp - lp - 1);
                 }
                 ins.label = sym;
+
                 if (!argList.empty()) {
                     for (auto& a : splitCommas(argList)) {
                         if (a.empty()) continue;
                         Operand op;
-                        if (!parseOperand(a, op)) {
-                            err = "line " + std::to_string(lineNo) + ": bad call arg";
+                        if (!parseOperand(a, &m, cur, op)) {
+                            err = "line " + std::to_string(lineNo)
+                                + ": bad call arg";
                             return false;
                         }
                         if (op.isImm) {
@@ -342,7 +414,8 @@ namespace vcb {
                 ps >> tyTok;
                 Ty t;
                 if (!parseTypeTok(tyTok, t)) {
-                    err = "line " + std::to_string(lineNo) + ": phi needs type";
+                    err = "line " + std::to_string(lineNo)
+                        + ": phi needs type";
                     return false;
                 }
                 ins.ty = t;
@@ -363,8 +436,9 @@ namespace vcb {
                         return false;
                     }
                     ValueId v;
-                    if (!parseValueTok(parts[0], v)) {
-                        err = "line " + std::to_string(lineNo) + ": bad phi value";
+                    if (!parseValueTok(parts[0], &m, cur, v)) {
+                        err = "line " + std::to_string(lineNo)
+                            + ": bad phi value";
                         return false;
                     }
                     ins.phiArgs.push_back({ v, parts[1] });
@@ -391,12 +465,14 @@ namespace vcb {
                 ls >> tyTok >> ptrTok;
                 Ty t;
                 if (!parseTypeTok(tyTok, t)) {
-                    err = "line " + std::to_string(lineNo) + ": load needs type";
+                    err = "line " + std::to_string(lineNo)
+                        + ": load needs type";
                     return false;
                 }
                 ins.ty = t;
-                if (!parseOperand(ptrTok, ins.a)) {
-                    err = "line " + std::to_string(lineNo) + ": bad load ptr";
+                if (!parseOperand(ptrTok, &m, cur, ins.a)) {
+                    err = "line " + std::to_string(lineNo)
+                        + ": bad load ptr";
                     return false;
                 }
                 break;
@@ -409,39 +485,45 @@ namespace vcb {
                 std::getline(ss, rest2);
                 Ty t;
                 if (!parseTypeTok(tyTok, t)) {
-                    err = "line " + std::to_string(lineNo) + ": store needs type";
+                    err = "line " + std::to_string(lineNo)
+                        + ": store needs type";
                     return false;
                 }
                 ins.ty = t;
                 auto parts = splitCommas(rest2);
                 if (parts.size() != 2) {
-                    err = "line " + std::to_string(lineNo) + ": store needs val, ptr";
+                    err = "line " + std::to_string(lineNo)
+                        + ": store needs val, ptr";
                     return false;
                 }
-                if (!parseOperand(parts[0], ins.a)) {
-                    err = "line " + std::to_string(lineNo) + ": bad store val";
+                if (!parseOperand(parts[0], &m, cur, ins.a)) {
+                    err = "line " + std::to_string(lineNo)
+                        + ": bad store val";
                     return false;
                 }
-                if (!parseOperand(parts[1], ins.b)) {
-                    err = "line " + std::to_string(lineNo) + ": bad store ptr";
+                if (!parseOperand(parts[1], &m, cur, ins.b)) {
+                    err = "line " + std::to_string(lineNo)
+                        + ": bad store ptr";
                     return false;
                 }
                 break;
             }
 
-            case Op::Neg: case Op::Not: {
+            case Op::Copy: case Op::Neg: case Op::Not: {
                 std::istringstream us(rest);
                 std::string tyTok, valTok;
                 us >> tyTok >> valTok;
                 Ty t;
                 if (!parseTypeTok(tyTok, t)) {
-                    err = "line " + std::to_string(lineNo) + ": " + opName + " needs type";
+                    err = "line " + std::to_string(lineNo)
+                        + ": " + opName + " needs type";
                     return false;
                 }
                 ins.ty = t;
                 ins.srcTy = t;
-                if (!parseOperand(valTok, ins.a)) {
-                    err = "line " + std::to_string(lineNo) + ": bad operand";
+                if (!parseOperand(valTok, &m, cur, ins.a)) {
+                    err = "line " + std::to_string(lineNo)
+                        + ": bad operand";
                     return false;
                 }
                 break;
@@ -454,17 +536,20 @@ namespace vcb {
                 us >> dstTyTok >> srcTyTok >> valTok;
                 Ty dt, st;
                 if (!parseTypeTok(dstTyTok, dt)) {
-                    err = "line " + std::to_string(lineNo) + ": " + opName + " needs destination type";
+                    err = "line " + std::to_string(lineNo)
+                        + ": " + opName + " needs destination type";
                     return false;
                 }
                 if (!parseTypeTok(srcTyTok, st)) {
-                    err = "line " + std::to_string(lineNo) + ": " + opName + " needs source type";
+                    err = "line " + std::to_string(lineNo)
+                        + ": " + opName + " needs source type";
                     return false;
                 }
                 ins.ty = dt;
                 ins.srcTy = st;
-                if (!parseOperand(valTok, ins.a)) {
-                    err = "line " + std::to_string(lineNo) + ": bad operand";
+                if (!parseOperand(valTok, &m, cur, ins.a)) {
+                    err = "line " + std::to_string(lineNo)
+                        + ": bad operand";
                     return false;
                 }
                 break;
@@ -477,20 +562,22 @@ namespace vcb {
                 std::getline(bs, tail);
                 Ty t;
                 if (!parseTypeTok(tyTok, t)) {
-                    err = "line " + std::to_string(lineNo) + ": " + opName + " needs type";
+                    err = "line " + std::to_string(lineNo)
+                        + ": " + opName + " needs type";
                     return false;
                 }
                 ins.ty = t;
                 auto parts = splitCommas(tail);
                 if (parts.size() != 2) {
-                    err = "line " + std::to_string(lineNo) + ": " + opName + " needs 2 operands";
+                    err = "line " + std::to_string(lineNo)
+                        + ": " + opName + " needs 2 operands";
                     return false;
                 }
-                if (!parseOperand(parts[0], ins.a)) {
+                if (!parseOperand(parts[0], &m, cur, ins.a)) {
                     err = "line " + std::to_string(lineNo) + ": bad op1";
                     return false;
                 }
-                if (!parseOperand(parts[1], ins.b)) {
+                if (!parseOperand(parts[1], &m, cur, ins.b)) {
                     err = "line " + std::to_string(lineNo) + ": bad op2";
                     return false;
                 }
