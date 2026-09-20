@@ -17,6 +17,7 @@ set(VCB_CORE_SOURCES
     src/target.cpp
     src/codegen.cpp
     src/parser.cpp
+    src/regalloc.cpp
 )
 
 # --- vcb (main executable) ---

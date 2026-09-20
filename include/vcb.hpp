@@ -98,6 +98,23 @@ struct Module {
 };
 
 // ============================================================
+// Register allocation
+// ============================================================
+struct Loc {
+    enum Kind : uint8_t { Reg, Slot } kind = Slot;
+    int  idx     = 0;      // pool index (Reg) OR spill index (Slot)
+    bool isFloat = false;
+};
+
+struct RegAllocResult {
+    std::unordered_map<ValueId, Loc> loc;
+    std::vector<int> usedCalleeSaved;   // int-pool indices (2..6)
+    int              spillCount = 0;
+};
+
+RegAllocResult regalloc(Function& f);
+
+// ============================================================
 // Analysis
 // ============================================================
 struct Liveness {

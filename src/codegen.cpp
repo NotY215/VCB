@@ -1,10 +1,5 @@
 // VCB — Vayu Compiler Backend
-// codegen.cpp — x86-64 System V code generation
-//
-// Symbol policy:
-//   Every function except `main` is emitted as `_vcb_<name>`, and every
-//   block label is `<mangled_fn>_<block>`. This prevents GAS Intel-syntax
-//   tokenizer from confusing labels like `add3:` with `add` mnemonic + 3.
+// codegen.cpp — x86-64 SysV code generation, register-allocated
 
 #include "vcb.hpp"
 
@@ -20,46 +15,54 @@ namespace vcb {
 
     namespace {
 
-        constexpr int SLOT_SIZE = 8;
-
-        // ------------------------------------------------------------
-        // Symbol mangling
-        // ------------------------------------------------------------
-        inline std::string symName(const std::string& user) {
-            if (user == "main") return user;
-            return "_vcb_" + user;
-        }
-
-        inline std::string mangledSymbol(const std::string& user) {
-            return symName(user);
-        }
-
         // ============================================================
-        // Frame layout
+        // Register pool naming
         // ============================================================
-        struct Frame {
-            std::unordered_map<ValueId, int> slot;
-            std::unordered_map<ValueId, int> allocOfs;
-            int totalSize = 0;
+        struct IntNames { const char* r64; const char* r32; const char* r16; const char* r8; };
+        static const IntNames INT_POOL[] = {
+            { "r10","r10d","r10w","r10b" },
+            { "r11","r11d","r11w","r11b" },
+            { "rbx","ebx", "bx",  "bl"   },
+            { "r12","r12d","r12w","r12b" },
+            { "r13","r13d","r13w","r13b" },
+            { "r14","r14d","r14w","r14b" },
+            { "r15","r15d","r15w","r15b" },
         };
+        static constexpr int INT_POOL_SIZE = 7;
+        static constexpr int INT_CALLEE_START = 2;
 
-        // ============================================================
-        // Register naming
-        // ============================================================
+        static const char* FLOAT_POOL[] = {
+            "xmm1","xmm2","xmm3","xmm4","xmm5","xmm6","xmm7"
+        };
+        static constexpr int FLOAT_POOL_SIZE = 7;
+
+        inline const char* poolIntName(int i, Ty t) {
+            switch (t) {
+            case Ty::I8:  return INT_POOL[i].r8;
+            case Ty::I16: return INT_POOL[i].r16;
+            case Ty::I32: return INT_POOL[i].r32;
+            default:      return INT_POOL[i].r64;
+            }
+        }
+        inline const char* poolFloatName(int i) { return FLOAT_POOL[i]; }
+
         inline const char* iszOf(Ty t) {
             switch (t) {
             case Ty::I8:  return "byte";
             case Ty::I16: return "word";
             case Ty::I32: return "dword";
-            case Ty::I64:
-            case Ty::Ptr: return "qword";
             case Ty::F32: return "dword";
+            case Ty::I64:
+            case Ty::Ptr:
             case Ty::F64: return "qword";
             default:      return "qword";
             }
         }
 
-        inline const char* rA(Ty t) {
+        inline const char* sseSuf(Ty t) { return t == Ty::F32 ? "ss" : "sd"; }
+
+        // Scratch (never in pool)
+        inline const char* rAx(Ty t) {
             switch (t) {
             case Ty::I8:  return "al";
             case Ty::I16: return "ax";
@@ -67,8 +70,7 @@ namespace vcb {
             default:      return "rax";
             }
         }
-
-        inline const char* rB(Ty t) {
+        inline const char* rCx(Ty t) {
             switch (t) {
             case Ty::I8:  return "cl";
             case Ty::I16: return "cx";
@@ -77,100 +79,111 @@ namespace vcb {
             }
         }
 
-        inline const char* scratchReg(int i, Ty t) {
-            static const char* full[] = { "rax","rcx","rdx","r10","r11" };
-            static const char* w32[] = { "eax","ecx","edx","r10d","r11d" };
-            static const char* w16[] = { "ax","cx","dx","r10w","r11w" };
-            static const char* w8[] = { "al","cl","dl","r10b","r11b" };
-            if (i < 0 || i > 4) return "rax";
-            switch (t) {
-            case Ty::I8:  return w8[i];
-            case Ty::I16: return w16[i];
-            case Ty::I32: return w32[i];
-            default:      return full[i];
-            }
-        }
-
-        inline const char* xmmReg(int i) {
-            static const char* names[] = { "xmm0","xmm1","xmm2","xmm3" };
-            if (i < 0 || i > 3) return "xmm0";
-            return names[i];
-        }
-
-        inline const char* sseSuf(Ty t) {
-            return (t == Ty::F32) ? "ss" : "sd";
+        inline std::string symName(const std::string& user) {
+            return user == "main" ? user : ("_vcb_" + user);
         }
 
         // ============================================================
-        // Slot helpers — int
+        // Frame / layout
         // ============================================================
-        void emitLoadIntSlot(std::ostream& o, const Frame& fr, ValueId v,
-            Ty t, int scratch = 0)
-        {
-            auto it = fr.slot.find(v);
-            if (it == fr.slot.end()) {
-                o << "    ; [warn] missing int slot for %" << v << "\n";
-                return;
-            }
-            o << "    mov " << scratchReg(scratch, t)
-                << ", " << iszOf(t) << " ptr [rbp" << it->second << "]\n";
+        struct Frame {
+            RegAllocResult ra;
+            std::unordered_map<ValueId, int> allocaOfs;    // alloca dst -> rbp offset
+            std::unordered_map<int, int>     csOfs;        // pool idx -> rbp offset
+            int totalSize = 0;
+        };
+
+        int slotOffset(const Frame& fr, int spillIdx) {
+            int C = (int)fr.ra.usedCalleeSaved.size();
+            return -(8 * C) - 8 * (spillIdx + 1);
         }
 
-        void emitStoreIntSlot(std::ostream& o, const Frame& fr, ValueId v,
-            Ty t, int scratch = 0)
-        {
-            auto it = fr.slot.find(v);
-            if (it == fr.slot.end()) return;
-            o << "    mov " << iszOf(t) << " ptr [rbp" << it->second << "], "
-                << scratchReg(scratch, t) << "\n";
-        }
-
-        void emitLoadIntOperand(std::ostream& o, const Frame& fr,
-            const Operand& op, Ty t, int scratch)
+        // ============================================================
+        // Loading / storing values according to location
+        // ============================================================
+        void loadInt(std::ostream& o, const Frame& fr, const Operand& op,
+            Ty t, const char* dst)
         {
             if (op.isImm) {
-                o << "    mov " << scratchReg(scratch, t) << ", " << op.imm << "\n";
-            }
-            else {
-                emitLoadIntSlot(o, fr, op.val, t, scratch);
-            }
-        }
-
-        // ============================================================
-        // Slot helpers — float
-        // ============================================================
-        void emitLoadFloatSlot(std::ostream& o, const Frame& fr, ValueId v,
-            Ty t, int scratch)
-        {
-            auto it = fr.slot.find(v);
-            if (it == fr.slot.end()) {
-                o << "    ; [warn] missing float slot for %" << v << "\n";
+                o << "    mov " << dst << ", " << op.imm << "\n";
                 return;
             }
-            const char* suf = sseSuf(t);
-            o << "    mov" << suf << " " << xmmReg(scratch)
-                << ", " << iszOf(t) << " ptr [rbp" << it->second << "]\n";
+            auto it = fr.ra.loc.find(op.val);
+            if (it == fr.ra.loc.end()) {
+                o << "    ; [warn] no loc for %" << op.val << "\n";
+                return;
+            }
+            const Loc& l = it->second;
+            if (l.kind == Loc::Reg) {
+                const char* src = poolIntName(l.idx, t);
+                if (std::string(src) != dst)
+                    o << "    mov " << dst << ", " << src << "\n";
+            }
+            else {
+                int off = slotOffset(fr, l.idx);
+                o << "    mov " << dst << ", " << iszOf(t)
+                    << " ptr [rbp" << off << "]\n";
+            }
         }
 
-        void emitStoreFloatSlot(std::ostream& o, const Frame& fr, ValueId v,
-            Ty t, int scratch)
+        void storeInt(std::ostream& o, const Frame& fr, ValueId v,
+            Ty t, const char* src)
         {
-            auto it = fr.slot.find(v);
-            if (it == fr.slot.end()) return;
-            const char* suf = sseSuf(t);
-            o << "    mov" << suf << " " << iszOf(t) << " ptr [rbp" << it->second
-                << "], " << xmmReg(scratch) << "\n";
+            auto it = fr.ra.loc.find(v);
+            if (it == fr.ra.loc.end()) return;
+            const Loc& l = it->second;
+            if (l.kind == Loc::Reg) {
+                const char* dst = poolIntName(l.idx, t);
+                if (std::string(dst) != src)
+                    o << "    mov " << dst << ", " << src << "\n";
+            }
+            else {
+                int off = slotOffset(fr, l.idx);
+                o << "    mov " << iszOf(t) << " ptr [rbp" << off
+                    << "], " << src << "\n";
+            }
         }
 
-        void emitLoadFloatOperand(std::ostream& o, const Frame& fr,
-            const Operand& op, Ty t, int scratch)
+        void loadFloat(std::ostream& o, const Frame& fr, const Operand& op,
+            Ty t, const char* dst)
         {
+            const char* suf = sseSuf(t);
             if (op.isImm) {
                 o << "    mov rax, " << op.imm << "\n";
-                o << "    cvtsi2" << sseSuf(t) << " " << xmmReg(scratch) << ", rax\n";
+                o << "    cvtsi2" << suf << " " << dst << ", rax\n";
+                return;
+            }
+            auto it = fr.ra.loc.find(op.val);
+            if (it == fr.ra.loc.end()) return;
+            const Loc& l = it->second;
+            if (l.kind == Loc::Reg) {
+                const char* src = poolFloatName(l.idx);
+                if (std::string(src) != dst)
+                    o << "    movap" << suf << " " << dst << ", " << src << "\n";
             }
             else {
-                emitLoadFloatSlot(o, fr, op.val, t, scratch);
+                int off = slotOffset(fr, l.idx);
+                o << "    mov" << suf << " " << dst
+                    << ", " << iszOf(t) << " ptr [rbp" << off << "]\n";
+            }
+        }
+
+        void storeFloat(std::ostream& o, const Frame& fr, ValueId v,
+            Ty t, const char* src)
+        {
+            const char* suf = sseSuf(t);
+            auto it = fr.ra.loc.find(v);
+            if (it == fr.ra.loc.end()) return;
+            const Loc& l = it->second;
+            if (l.kind == Loc::Reg) {
+                const char* dst = poolFloatName(l.idx);
+                if (std::string(dst) != src)
+                    o << "    movap" << suf << " " << dst << ", " << src << "\n";
+            }
+            else {
+                int off = slotOffset(fr, l.idx);
+                o << "    mov" << suf << " " << iszOf(t) << " ptr [rbp" << off
+                    << "], " << src << "\n";
             }
         }
 
@@ -178,7 +191,7 @@ namespace vcb {
         // Extend / truncate
         // ============================================================
         void emitExtend(std::ostream& o, Ty srcTy, Ty dstTy, bool sign) {
-            auto bytes = [](Ty t) -> int {
+            auto bytes = [](Ty t) {
                 switch (t) {
                 case Ty::I8:  return 1;
                 case Ty::I16: return 2;
@@ -188,196 +201,163 @@ namespace vcb {
                 default:      return 4;
                 }
                 };
-            int s = bytes(srcTy);
-            int d = bytes(dstTy);
+            int s = bytes(srcTy), d = bytes(dstTy);
             if (s >= d) return;
-
             if (sign) {
                 if (s == 1) o << "    movsx eax, al\n";
                 else if (s == 2) o << "    movsx eax, ax\n";
                 else if (s == 4) o << "    movsxd rax, eax\n";
-                return;
             }
-            if (s == 1) o << "    movzx eax, al\n";
-            else if (s == 2) o << "    movzx eax, ax\n";
-            else if (s == 4) o << "    mov eax, eax\n";
+            else {
+                if (s == 1) o << "    movzx eax, al\n";
+                else if (s == 2) o << "    movzx eax, ax\n";
+                else if (s == 4) o << "    mov eax, eax\n";
+            }
         }
 
         // ============================================================
         // Single instruction
         // ============================================================
         void emitOneInstr(std::ostream& o, Instr& in, const Frame& fr,
-            const std::string& epilogue, const std::string& fnMangled)
+            const std::string& epilogue, const std::string& fnSym)
         {
             const bool fp = isFloat(in.ty);
 
             switch (in.op) {
 
-            case Op::Nop:
-                break;
+            case Op::Nop: break;
 
             case Op::Copy: {
                 if (fp) {
-                    emitLoadFloatOperand(o, fr, in.a, in.ty, 0);
-                    emitStoreFloatSlot(o, fr, in.dst, in.ty, 0);
+                    loadFloat(o, fr, in.a, in.ty, "xmm0");
+                    storeFloat(o, fr, in.dst, in.ty, "xmm0");
                 }
                 else {
-                    emitLoadIntOperand(o, fr, in.a, in.ty, 0);
-                    emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                    loadInt(o, fr, in.a, in.ty, rAx(in.ty));
+                    storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                 }
                 break;
             }
 
             case Op::Add: case Op::Sub: case Op::Mul: case Op::Div: {
                 if (fp) {
-                    const char* suf = sseSuf(in.ty);
-                    emitLoadFloatOperand(o, fr, in.a, in.ty, 0);
-                    emitLoadFloatOperand(o, fr, in.b, in.ty, 1);
+                    loadFloat(o, fr, in.a, in.ty, "xmm0");
+                    loadFloat(o, fr, in.b, in.ty, "xmm2");
                     const char* mn =
                         in.op == Op::Add ? "add" :
                         in.op == Op::Sub ? "sub" :
                         in.op == Op::Mul ? "mul" : "div";
-                    o << "    " << mn << suf << " "
-                        << xmmReg(0) << ", " << xmmReg(1) << "\n";
-                    emitStoreFloatSlot(o, fr, in.dst, in.ty, 0);
+                    o << "    " << mn << sseSuf(in.ty)
+                        << " xmm0, xmm2\n";
+                    storeFloat(o, fr, in.dst, in.ty, "xmm0");
                     break;
                 }
-                emitLoadIntOperand(o, fr, in.a, in.ty, 0);
-                const char* mn =
-                    in.op == Op::Add ? "add" :
-                    in.op == Op::Sub ? "sub" :
-                    in.op == Op::Div ? "idiv" : "imul";
-
+                loadInt(o, fr, in.a, in.ty, rAx(in.ty));
                 if (in.op == Op::Mul) {
                     if (in.b.isImm) {
-                        o << "    imul " << rA(in.ty) << ", " << rA(in.ty)
+                        o << "    imul " << rAx(in.ty) << ", " << rAx(in.ty)
                             << ", " << in.b.imm << "\n";
                     }
                     else {
-                        emitLoadIntSlot(o, fr, in.b.val, in.ty, 1);
-                        o << "    imul " << rA(in.ty) << ", " << rB(in.ty) << "\n";
+                        loadInt(o, fr, in.b, in.ty, rCx(in.ty));
+                        o << "    imul " << rAx(in.ty) << ", " << rCx(in.ty) << "\n";
                     }
-                    emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                    storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                     break;
                 }
                 if (in.op == Op::Div) {
-                    if (in.b.isImm) {
-                        o << "    mov " << rB(in.ty) << ", " << in.b.imm << "\n";
-                    }
-                    else {
-                        emitLoadIntSlot(o, fr, in.b.val, in.ty, 1);
-                    }
-                    if (in.ty == Ty::I32 || in.ty == Ty::I16 || in.ty == Ty::I8) {
-                        o << "    cdq\n    idiv ecx\n";
-                    }
-                    else {
-                        o << "    cqo\n    idiv rcx\n";
-                    }
-                    emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                    if (in.b.isImm) o << "    mov " << rCx(in.ty) << ", " << in.b.imm << "\n";
+                    else            loadInt(o, fr, in.b, in.ty, rCx(in.ty));
+                    if (in.ty == Ty::I32) { o << "    cdq\n    idiv ecx\n"; }
+                    else { o << "    cqo\n    idiv rcx\n"; }
+                    storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                     break;
                 }
+                const char* mn =
+                    in.op == Op::Add ? "add" : "sub";
                 if (in.b.isImm) {
-                    o << "    " << mn << " " << rA(in.ty)
+                    o << "    " << mn << " " << rAx(in.ty)
                         << ", " << in.b.imm << "\n";
                 }
                 else {
-                    emitLoadIntSlot(o, fr, in.b.val, in.ty, 1);
-                    o << "    " << mn << " " << rA(in.ty)
-                        << ", " << rB(in.ty) << "\n";
+                    loadInt(o, fr, in.b, in.ty, rCx(in.ty));
+                    o << "    " << mn << " " << rAx(in.ty)
+                        << ", " << rCx(in.ty) << "\n";
                 }
-                emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                 break;
             }
 
             case Op::Rem: {
-                emitLoadIntOperand(o, fr, in.a, in.ty, 0);
-                if (in.b.isImm) {
-                    o << "    mov " << rB(in.ty) << ", " << in.b.imm << "\n";
-                }
-                else {
-                    emitLoadIntSlot(o, fr, in.b.val, in.ty, 1);
-                }
-                if (in.ty == Ty::I32) {
-                    o << "    cdq\n    idiv ecx\n    mov eax, edx\n";
-                }
-                else {
-                    o << "    cqo\n    idiv rcx\n    mov rax, rdx\n";
-                }
-                emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                loadInt(o, fr, in.a, in.ty, rAx(in.ty));
+                if (in.b.isImm) o << "    mov " << rCx(in.ty) << ", " << in.b.imm << "\n";
+                else            loadInt(o, fr, in.b, in.ty, rCx(in.ty));
+                if (in.ty == Ty::I32) { o << "    cdq\n    idiv ecx\n    mov eax, edx\n"; }
+                else { o << "    cqo\n    idiv rcx\n    mov rax, rdx\n"; }
+                storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                 break;
             }
 
             case Op::And: case Op::Or: case Op::Xor: {
-                emitLoadIntOperand(o, fr, in.a, in.ty, 0);
+                loadInt(o, fr, in.a, in.ty, rAx(in.ty));
                 const char* mn =
                     in.op == Op::And ? "and" :
                     in.op == Op::Or ? "or" : "xor";
                 if (in.b.isImm) {
-                    o << "    " << mn << " " << rA(in.ty)
+                    o << "    " << mn << " " << rAx(in.ty)
                         << ", " << in.b.imm << "\n";
                 }
                 else {
-                    emitLoadIntSlot(o, fr, in.b.val, in.ty, 1);
-                    o << "    " << mn << " " << rA(in.ty)
-                        << ", " << rB(in.ty) << "\n";
+                    loadInt(o, fr, in.b, in.ty, rCx(in.ty));
+                    o << "    " << mn << " " << rAx(in.ty)
+                        << ", " << rCx(in.ty) << "\n";
                 }
-                emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                 break;
             }
 
             case Op::Shl: case Op::Shr: case Op::Sar: {
-                emitLoadIntOperand(o, fr, in.a, in.ty, 0);
-                if (in.b.isImm) {
-                    o << "    mov cl, " << (in.b.imm & 63) << "\n";
-                }
-                else {
-                    emitLoadIntSlot(o, fr, in.b.val, Ty::I8, 1);
-                }
+                loadInt(o, fr, in.a, in.ty, rAx(in.ty));
+                if (in.b.isImm) o << "    mov cl, " << (in.b.imm & 63) << "\n";
+                else            loadInt(o, fr, in.b, Ty::I8, "cl");
                 const char* mn =
                     in.op == Op::Shl ? "shl" :
                     in.op == Op::Shr ? "shr" : "sar";
-                o << "    " << mn << " " << rA(in.ty) << ", cl\n";
-                emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                o << "    " << mn << " " << rAx(in.ty) << ", cl\n";
+                storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                 break;
             }
 
             case Op::Neg: {
                 if (fp) {
-                    emitLoadFloatOperand(o, fr, in.a, in.ty, 0);
+                    loadFloat(o, fr, in.a, in.ty, "xmm0");
                     if (in.ty == Ty::F32) {
-                        o << "    mov eax, 0x80000000\n";
-                        o << "    movd xmm1, eax\n";
-                        o << "    xorps xmm0, xmm1\n";
+                        o << "    mov eax, 0x80000000\n    movd xmm2, eax\n    xorps xmm0, xmm2\n";
                     }
                     else {
-                        o << "    mov rax, 0x8000000000000000\n";
-                        o << "    movq xmm1, rax\n";
-                        o << "    xorpd xmm0, xmm1\n";
+                        o << "    mov rax, 0x8000000000000000\n    movq xmm2, rax\n    xorpd xmm0, xmm2\n";
                     }
-                    emitStoreFloatSlot(o, fr, in.dst, in.ty, 0);
+                    storeFloat(o, fr, in.dst, in.ty, "xmm0");
                     break;
                 }
-                emitLoadIntOperand(o, fr, in.a, in.ty, 0);
-                o << "    neg " << rA(in.ty) << "\n";
-                emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                loadInt(o, fr, in.a, in.ty, rAx(in.ty));
+                o << "    neg " << rAx(in.ty) << "\n";
+                storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                 break;
             }
-
             case Op::Not: {
-                emitLoadIntOperand(o, fr, in.a, in.ty, 0);
-                o << "    not " << rA(in.ty) << "\n";
-                emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                loadInt(o, fr, in.a, in.ty, rAx(in.ty));
+                o << "    not " << rAx(in.ty) << "\n";
+                storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                 break;
             }
 
             case Op::Ceq: case Op::Cne: case Op::Clt:
             case Op::Cle: case Op::Cgt: case Op::Cge: {
                 if (fp) {
-                    const char* suf = sseSuf(in.ty);
-                    emitLoadFloatOperand(o, fr, in.a, in.ty, 0);
-                    emitLoadFloatOperand(o, fr, in.b, in.ty, 1);
-                    o << "    ucomi" << suf << " " << xmmReg(0)
-                        << ", " << xmmReg(1) << "\n";
+                    loadFloat(o, fr, in.a, in.ty, "xmm0");
+                    loadFloat(o, fr, in.b, in.ty, "xmm2");
+                    o << "    ucomi" << sseSuf(in.ty) << " xmm0, xmm2\n";
                     const char* setcc = nullptr;
                     bool needNp = false;
                     switch (in.op) {
@@ -392,122 +372,116 @@ namespace vcb {
                     o << "    " << setcc << " al\n";
                     if (needNp) o << "    setnp cl\n    and al, cl\n";
                     o << "    movzx eax, al\n";
-                    emitStoreIntSlot(o, fr, in.dst, Ty::I32, 0);
+                    storeInt(o, fr, in.dst, Ty::I32, "eax");
                     break;
                 }
-                emitLoadIntOperand(o, fr, in.a, in.ty, 0);
-                emitLoadIntOperand(o, fr, in.b, in.ty, 1);
-                o << "    cmp " << rA(in.ty) << ", " << rB(in.ty) << "\n";
+                loadInt(o, fr, in.a, in.ty, rAx(in.ty));
+                loadInt(o, fr, in.b, in.ty, rCx(in.ty));
+                o << "    cmp " << rAx(in.ty) << ", " << rCx(in.ty) << "\n";
                 const char* setcc =
                     in.op == Op::Ceq ? "sete" :
                     in.op == Op::Cne ? "setne" :
                     in.op == Op::Clt ? "setl" :
                     in.op == Op::Cle ? "setle" :
                     in.op == Op::Cgt ? "setg" : "setge";
-                o << "    " << setcc << " al\n";
-                o << "    movzx eax, al\n";
-                emitStoreIntSlot(o, fr, in.dst, Ty::I32, 0);
+                o << "    " << setcc << " al\n    movzx eax, al\n";
+                storeInt(o, fr, in.dst, Ty::I32, "eax");
                 break;
             }
 
             case Op::Load: {
-                emitLoadIntOperand(o, fr, in.a, Ty::Ptr, 0);
+                loadInt(o, fr, in.a, Ty::Ptr, "rax");
                 if (fp) {
-                    const char* suf = sseSuf(in.ty);
-                    o << "    mov" << suf << " " << xmmReg(0)
-                        << ", " << iszOf(in.ty) << " ptr [rax]\n";
-                    emitStoreFloatSlot(o, fr, in.dst, in.ty, 0);
+                    o << "    mov" << sseSuf(in.ty) << " xmm0, "
+                        << iszOf(in.ty) << " ptr [rax]\n";
+                    storeFloat(o, fr, in.dst, in.ty, "xmm0");
                 }
                 else {
-                    o << "    mov " << rA(in.ty)
-                        << ", " << iszOf(in.ty) << " ptr [rax]\n";
-                    emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                    o << "    mov " << rAx(in.ty) << ", "
+                        << iszOf(in.ty) << " ptr [rax]\n";
+                    storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                 }
                 break;
             }
             case Op::Store: {
                 if (fp) {
-                    emitLoadFloatOperand(o, fr, in.a, in.ty, 0);
-                    emitLoadIntOperand(o, fr, in.b, Ty::Ptr, 1);
-                    const char* suf = sseSuf(in.ty);
-                    o << "    mov" << suf << " " << iszOf(in.ty)
-                        << " ptr [rcx], " << xmmReg(0) << "\n";
+                    loadFloat(o, fr, in.a, in.ty, "xmm0");
+                    loadInt(o, fr, in.b, Ty::Ptr, "rcx");
+                    o << "    mov" << sseSuf(in.ty) << " "
+                        << iszOf(in.ty) << " ptr [rcx], xmm0\n";
                 }
                 else {
-                    emitLoadIntOperand(o, fr, in.a, in.ty, 0);
-                    emitLoadIntOperand(o, fr, in.b, Ty::Ptr, 1);
+                    loadInt(o, fr, in.a, in.ty, rAx(in.ty));
+                    loadInt(o, fr, in.b, Ty::Ptr, "rcx");
                     o << "    mov " << iszOf(in.ty)
-                        << " ptr [rcx], " << rA(in.ty) << "\n";
+                        << " ptr [rcx], " << rAx(in.ty) << "\n";
                 }
                 break;
             }
 
             case Op::Alloc: {
-                auto it = fr.allocOfs.find(in.dst);
-                if (it == fr.allocOfs.end()) {
-                    o << "    ; [warn] alloca slot missing\n";
+                auto it = fr.allocaOfs.find(in.dst);
+                if (it == fr.allocaOfs.end()) {
+                    o << "    ; [warn] missing alloca slot\n";
                     break;
                 }
                 o << "    lea rax, [rbp" << it->second << "]\n";
-                emitStoreIntSlot(o, fr, in.dst, Ty::Ptr, 0);
+                storeInt(o, fr, in.dst, Ty::Ptr, "rax");
                 break;
             }
 
             case Op::Trunc: case Op::Zext: case Op::Sext: {
-                emitLoadIntOperand(o, fr, in.a, in.srcTy, 0);
+                loadInt(o, fr, in.a, in.srcTy, rAx(in.srcTy));
                 if (in.op != Op::Trunc)
                     emitExtend(o, in.srcTy, in.ty, in.op == Op::Sext);
-                emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                 break;
             }
 
             case Op::Sitofp: {
-                emitLoadIntOperand(o, fr, in.a, in.srcTy, 0);
-                const char* suf = sseSuf(in.ty);
+                loadInt(o, fr, in.a, in.srcTy, rAx(in.srcTy));
                 bool srcIs64 = (in.srcTy == Ty::I64 || in.srcTy == Ty::Ptr);
                 if (srcIs64)
-                    o << "    cvtsi2" << suf << " " << xmmReg(0) << ", rax\n";
+                    o << "    cvtsi2" << sseSuf(in.ty) << " xmm0, rax\n";
                 else
-                    o << "    cvtsi2" << suf << " " << xmmReg(0) << ", eax\n";
-                emitStoreFloatSlot(o, fr, in.dst, in.ty, 0);
+                    o << "    cvtsi2" << sseSuf(in.ty) << " xmm0, eax\n";
+                storeFloat(o, fr, in.dst, in.ty, "xmm0");
                 break;
             }
-
             case Op::Fptosi: {
-                emitLoadFloatOperand(o, fr, in.a, in.srcTy, 0);
-                const char* suf = sseSuf(in.srcTy);
+                loadFloat(o, fr, in.a, in.srcTy, "xmm0");
                 bool dstIs64 = (in.ty == Ty::I64 || in.ty == Ty::Ptr);
                 if (dstIs64)
-                    o << "    cvtt" << suf << "2si rax, " << xmmReg(0) << "\n";
+                    o << "    cvtt" << sseSuf(in.srcTy) << "2si rax, xmm0\n";
                 else
-                    o << "    cvtt" << suf << "2si eax, " << xmmReg(0) << "\n";
-                emitStoreIntSlot(o, fr, in.dst, in.ty, 0);
+                    o << "    cvtt" << sseSuf(in.srcTy) << "2si eax, xmm0\n";
+                storeInt(o, fr, in.dst, in.ty, rAx(in.ty));
                 break;
             }
 
             case Op::Jmp: {
-                o << "    jmp " << fnMangled << "_" << in.label << "\n";
+                o << "    jmp " << fnSym << "_" << in.label << "\n";
                 break;
             }
             case Op::Jnz: {
-                emitLoadIntOperand(o, fr, in.a, in.ty, 0);
-                o << "    test " << rA(in.ty) << ", " << rA(in.ty) << "\n";
-                o << "    jne " << fnMangled << "_" << in.label << "\n";
-                o << "    jmp " << fnMangled << "_" << in.label2 << "\n";
+                loadInt(o, fr, in.a, in.ty, rAx(in.ty));
+                o << "    test " << rAx(in.ty) << ", " << rAx(in.ty) << "\n";
+                o << "    jne " << fnSym << "_" << in.label << "\n";
+                o << "    jmp " << fnSym << "_" << in.label2 << "\n";
                 break;
             }
 
             case Op::Ret: {
                 if (in.a.val != NOVAL || in.a.isImm) {
                     if (fp) {
-                        emitLoadFloatOperand(o, fr, in.a, in.ty, 0);
+                        loadFloat(o, fr, in.a, in.ty, "xmm0");
                     }
                     else if (in.a.isImm) {
                         o << "    mov eax, " << in.a.imm << "\n";
                     }
                     else {
                         Ty rty = (in.ty == Ty::Void) ? Ty::I32 : in.ty;
-                        emitLoadIntSlot(o, fr, in.a.val, rty, 0);
+                        loadInt(o, fr, in.a, rty, rAx(rty));
                     }
                 }
                 o << "    jmp " << epilogue << "\n";
@@ -520,27 +494,33 @@ namespace vcb {
                 if (n > 6) n = 6;
                 for (size_t i = 0; i < n; ++i) {
                     ValueId v = in.phiArgs[i].first;
-                    auto it = fr.slot.find(v);
-                    if (it == fr.slot.end()) continue;
-                    o << "    mov " << argReg64[i]
-                        << ", qword ptr [rbp" << it->second << "]\n";
+                    auto it = fr.ra.loc.find(v);
+                    if (it == fr.ra.loc.end()) continue;
+                    const Loc& l = it->second;
+                    if (l.kind == Loc::Reg) {
+                        const char* src = poolIntName(l.idx, Ty::I64);
+                        o << "    mov " << argReg64[i] << ", " << src << "\n";
+                    }
+                    else {
+                        int off = slotOffset(fr, l.idx);
+                        o << "    mov " << argReg64[i]
+                            << ", qword ptr [rbp" << off << "]\n";
+                    }
                 }
-                // Mangle callee symbol.
-                o << "    call " << mangledSymbol(in.label) << "\n";
+                o << "    call " << symName(in.label) << "\n";
                 if (in.dst != NOVAL) {
                     if (fp) {
-                        emitStoreFloatSlot(o, fr, in.dst, in.ty, 0);
+                        storeFloat(o, fr, in.dst, in.ty, "xmm0");
                     }
                     else {
                         Ty rty = (in.ty == Ty::Void) ? Ty::I32 : in.ty;
-                        emitStoreIntSlot(o, fr, in.dst, rty, 0);
+                        storeInt(o, fr, in.dst, rty, rAx(rty));
                     }
                 }
                 break;
             }
 
-            case Op::Phi:
-                break;
+            case Op::Phi: break;
             }
         }
 
@@ -550,7 +530,6 @@ namespace vcb {
         void emitPhiCopies(std::ostream& o, Function& f, Block& b, const Frame& fr) {
             if (b.instrs.empty()) return;
             Instr& last = b.instrs.back();
-
             std::vector<const std::string*> succs;
             if (last.op == Op::Jmp) succs.push_back(&last.label);
             else if (last.op == Op::Jnz) {
@@ -562,31 +541,26 @@ namespace vcb {
             for (const std::string* sp : succs) {
                 Block* tb = f.findBlock(*sp);
                 if (!tb) continue;
-
-                std::vector<std::pair<ValueId, ValueId>> moves;
                 for (auto& pin : tb->instrs) {
                     if (pin.op != Op::Phi) break;
                     for (auto& pa : pin.phiArgs) {
-                        if (pa.second == b.name) {
-                            moves.push_back({ pa.first, pin.dst });
-                            break;
+                        if (pa.second != b.name) continue;
+                        // Move source -> dst via rax/xmm0.
+                        if (pin.ty == Ty::F32 || pin.ty == Ty::F64) {
+                            loadFloat(o, fr, Operand::V(pa.first), pin.ty, "xmm0");
+                            storeFloat(o, fr, pin.dst, pin.ty, "xmm0");
                         }
+                        else {
+                            loadInt(o, fr, Operand::V(pa.first), Ty::I64, "rax");
+                            storeInt(o, fr, pin.dst, Ty::I64, "rax");
+                        }
+                        break;
                     }
                 }
-                if (moves.empty()) continue;
-
-                const size_t maxScratch = 5;
-                size_t n = moves.size();
-                if (n > maxScratch) n = maxScratch;
-
-                for (size_t i = 0; i < n; ++i)
-                    emitLoadIntSlot(o, fr, moves[i].first, Ty::I64, (int)i);
-                for (size_t i = 0; i < n; ++i)
-                    emitStoreIntSlot(o, fr, moves[i].second, Ty::I64, (int)i);
             }
         }
 
-    } // anonymous namespace
+    } // anon
 
     // ============================================================
     // Entry
@@ -599,34 +573,29 @@ namespace vcb {
             Function& f = *fp;
             const std::string fnSym = symName(f.name);
 
-            // ---- Frame layout ----
             Frame fr;
-            int cursor = 0;
+            fr.ra = regalloc(f);
 
+            // Callee-saved offsets: [rbp-8], [rbp-16], ...
+            for (size_t i = 0; i < fr.ra.usedCalleeSaved.size(); ++i)
+                fr.csOfs[fr.ra.usedCalleeSaved[i]] = -(int)(8 * (i + 1));
+
+            int csBytes = 8 * (int)fr.ra.usedCalleeSaved.size();
+            int spillBytes = 8 * fr.ra.spillCount;
+            int cursor = -(csBytes + spillBytes);
+
+            // Allocas below spill area
             for (auto& b : f.blocks) {
                 for (auto& in : b.instrs) {
                     if (in.op == Op::Alloc) {
                         int64_t bytes = (in.b.isImm && in.b.imm > 0) ? in.b.imm : 8;
                         cursor -= (int)bytes;
                         cursor &= ~7;
-                        fr.allocOfs[in.dst] = cursor;
+                        fr.allocaOfs[in.dst] = cursor;
                     }
                 }
             }
-            for (auto& p : f.params) {
-                if (!fr.slot.count(p.id)) {
-                    cursor -= SLOT_SIZE;
-                    fr.slot[p.id] = cursor;
-                }
-            }
-            for (auto& b : f.blocks) {
-                for (auto& in : b.instrs) {
-                    if (in.dst != NOVAL && !fr.slot.count(in.dst)) {
-                        cursor -= SLOT_SIZE;
-                        fr.slot[in.dst] = cursor;
-                    }
-                }
-            }
+
             int total = -cursor;
             total = (total + 15) & ~15;
             fr.totalSize = total;
@@ -639,6 +608,13 @@ namespace vcb {
             if (fr.totalSize)
                 out << "    sub rsp, " << fr.totalSize << "\n";
 
+            // Save callee-saved registers
+            for (auto& kv : fr.csOfs) {
+                const char* r = INT_POOL[kv.first].r64;
+                out << "    mov qword ptr [rbp" << kv.second << "], " << r << "\n";
+            }
+
+            // Store incoming ABI params into their locations
             static const char* argReg64[6] = { "rdi","rsi","rdx","rcx","r8","r9" };
             static const char* argReg32[6] = { "edi","esi","edx","ecx","r8d","r9d" };
             static const char* argReg16[6] = { "di","si","dx","cx","r8w","r9w" };
@@ -646,20 +622,24 @@ namespace vcb {
 
             for (size_t i = 0; i < f.params.size() && i < 6; ++i) {
                 auto& p = f.params[i];
-                auto it = fr.slot.find(p.id);
-                if (it == fr.slot.end()) continue;
-                if (isFloat(p.ty)) {
-                    const char* suf = (p.ty == Ty::F32) ? "ss" : "sd";
-                    out << "    mov" << suf << " " << iszOf(p.ty)
-                        << " ptr [rbp" << it->second << "], xmm" << i << "\n";
-                    continue;
-                }
+                auto it = fr.ra.loc.find(p.id);
+                if (it == fr.ra.loc.end()) continue;
+                const Loc& l = it->second;
                 const char* src = argReg64[i];
                 if (p.ty == Ty::I32) src = argReg32[i];
                 else if (p.ty == Ty::I16) src = argReg16[i];
                 else if (p.ty == Ty::I8)  src = argReg8[i];
-                out << "    mov " << iszOf(p.ty)
-                    << " ptr [rbp" << it->second << "], " << src << "\n";
+
+                if (l.kind == Loc::Reg) {
+                    const char* dst = poolIntName(l.idx, p.ty);
+                    if (std::string(src) != dst)
+                        out << "    mov " << dst << ", " << src << "\n";
+                }
+                else {
+                    int off = slotOffset(fr, l.idx);
+                    out << "    mov " << iszOf(p.ty)
+                        << " ptr [rbp" << off << "], " << src << "\n";
+                }
             }
 
             // ---- Body ----
@@ -678,6 +658,11 @@ namespace vcb {
 
             // ---- Epilogue ----
             out << epilogue << ":\n";
+            // Restore callee-saved registers
+            for (auto& kv : fr.csOfs) {
+                const char* r = INT_POOL[kv.first].r64;
+                out << "    mov " << r << ", qword ptr [rbp" << kv.second << "]\n";
+            }
             out << "    leave\n";
             out << "    ret\n\n";
         }
