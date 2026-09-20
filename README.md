@@ -2,6 +2,12 @@
 
 <div align="center">
 
+<a href="https://github.com/NotY215/VCB">
+  <img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_banner.svg" alt="VCB animated banner" width="900">
+</a>
+
+<br><br>
+
 <a href="https://github.com/NotY215/Vayu">
   <img src="https://raw.githubusercontent.com/NotY215/Vayu/master/assets/logo.svg" alt="Vayu Logo" width="145">
 </a>
@@ -16,7 +22,7 @@
 
 ### Vayu Compiler Backend
 
-**A compact C++20 backend being developed to turn Vayu's internal .vcbir representation directly into native machine code.**
+**A compact, fast, Vayu-first C++20 backend for native machine code generation.**
 
 <a href="https://github.com/NotY215/Vayu"><img src="https://img.shields.io/badge/Vayu-Language-111827?style=for-the-badge" alt="Vayu"></a>
 <a href="https://github.com/NotY215/VCB"><img src="https://img.shields.io/badge/VCB-Compiler%20Backend-111827?style=for-the-badge" alt="VCB"></a>
@@ -30,8 +36,8 @@
 ## Identity
 
 > **VCB is the backend for Vayu.**  
-> **.vyu is Vayu source.**  
-> **.vcbir is VCB's internal IR.**
+> **`.vyu` is Vayu source.**  
+> **`.vcbir` is VCB's internal IR.**
 
 VCB is the native compiler backend specifically designed for the **Vayu Programming Language**.
 
@@ -270,27 +276,27 @@ The backend itself is intended to rely on the C++ standard library and the platf
 
 ## Why Use VCB?
 
-### For Language Designers
+### For Vayu / Backend Development
 
-If you are building a programming language, VCB provides a clean native-code boundary:
+For Vayu, VCB provides a clean native-code boundary:
 
 ```text
-Your Language
+Vayu Source (.vyu)
      │
      ▼
-Your Frontend
+Vayu Frontend
      │
      ▼
-VCB IL
+VCBIR (.vcbir)
      │
      ▼
 VCB
      │
      ▼
-Native Assembly
+Native Machine Code
 ```
 
-The frontend and backend can evolve independently. This is the same general architectural model that makes compact backends such as QBE useful to language projects.
+The Vayu frontend and VCB backend can evolve independently while sharing the `.vcbir` compiler boundary. This is the same general architectural model that makes compact backends such as QBE useful to language projects.
 
 ### For Compiler Researchers
 
@@ -336,9 +342,9 @@ VCB keeps the major backend concepts visible instead of hiding them behind a lar
 
 ---
 
-## VCB IL
+## VCBIR
 
-VCB IL is a **textual, typed, SSA-based intermediate language** intended to be both machine-generated and human-readable.
+VCBIR is a **typed, SSA-based internal intermediate representation** used by VCB. It is an implementation format, not another programming language.
 
 ### Types
 
@@ -354,7 +360,7 @@ ptr
 
 ### Core Concepts
 
-VCB IL is designed to support:
+VCBIR is designed to support:
 
 - SSA values
 - Basic blocks
@@ -394,7 +400,7 @@ The IR is intentionally explicit: operations work on typed values and avoid hidd
 ## Architecture
 
 ```text
-                    Vayu / Other Frontend
+                    Vayu Frontend
                              │
                              ▼
                           VCB IL
@@ -610,7 +616,7 @@ VCB does not attempt to provide LLVM-scale capabilities such as:
 
 ### Not a Frontend
 
-VCB does not parse C, C++, Rust, Python, or Vayu source code directly.
+VCB does not parse `.vyu` source directly. The Vayu frontend is responsible for understanding Vayu source and producing `.vcbir`.
 
 A frontend must emit VCB IL.
 
@@ -779,5 +785,38 @@ VCB is released under the **Apache License 2.0**.
 ### VCB
 
 **A small native backend for language designers, compiler researchers, JITs, and people who want to understand the whole compiler path.**
+
+</div>
+
+
+---
+
+## Visual Identity
+
+VCB uses the following project assets:
+
+| Asset | Purpose |
+|---|---|
+| `Assets/VCB_logo.png` | Primary VCB logo |
+| `Assets/VCB_Fav.png` | Compact icon / favicon asset |
+| `Assets/VCB_banner.svg` | Animated README banner |
+
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_logo.png" alt="VCB Logo" width="220">
+
+<br><br>
+
+<img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_Fav.png" alt="VCB Favicon" width="72">
+
+</div>
+
+---
+
+<div align="center">
+
+**Vayu → `.vcbir` → VCB → Native Code**
+
+<sub>VCB is the backend for Vayu. `.vyu` is Vayu source. `.vcbir` is VCB's internal IR.</sub>
 
 </div>
