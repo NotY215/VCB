@@ -3,16 +3,20 @@
 <div align="center">
 
 <a href="https://github.com/NotY215/Vayu">
-  <img src="https://raw.githubusercontent.com/NotY215/Vayu/master/assets/logo.svg" alt="Vayu Logo" width="150">
+  <img src="https://raw.githubusercontent.com/NotY215/Vayu/master/assets/logo.svg" alt="Vayu Logo" width="145">
+</a>
+&nbsp;&nbsp;&nbsp;
+<a href="https://github.com/NotY215/VCB">
+  <img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_logo.png" alt="VCB Logo" width="145">
 </a>
 
-<a href="https://github.com/NotY215/VCB">
-  <img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_logo.png" alt="VCB Logo" width="150">
+<a href="https://github.com/NotY215/Vayu">
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&size=22&duration=3000&pause=900&center=true&vCenter=true&width=820&lines=VCB+%E2%80%94+Vayu+Compiler+Backend;The+native+backend+for+Vayu;From+.vcbir+to+native+machine+code;No+QBE+%E2%86%92+.s+%E2%86%92+gcc+chain;Windows-first+single-binary+toolchain" alt="Animated VCB presentation">
 </a>
 
 ### Vayu Compiler Backend
 
-**A small, fast, self-contained native compiler backend built around VCB IL.**
+**A compact C++20 backend being developed to turn Vayu's internal .vcbir representation directly into native machine code.**
 
 <a href="https://github.com/NotY215/Vayu"><img src="https://img.shields.io/badge/Vayu-Language-111827?style=for-the-badge" alt="Vayu"></a>
 <a href="https://github.com/NotY215/VCB"><img src="https://img.shields.io/badge/VCB-Compiler%20Backend-111827?style=for-the-badge" alt="VCB"></a>
@@ -23,35 +27,170 @@
 
 ---
 
-## What It Is
+## Identity
 
-VCB is a **pure compiler backend written in C++20**. It consumes an SSA-based intermediate language — **VCB IL** — and is designed to emit **x86-64 assembly in Intel syntax**, targeting the **System V AMD64 ABI**.
+> **VCB is the backend for Vayu.**  
+> **.vyu is Vayu source.**  
+> **.vcbir is VCB's internal IR.**
 
-VCB has **no frontend and no language runtime**. A frontend produces textual VCB IL; VCB takes over from there:
+VCB is the native compiler backend specifically designed for the **Vayu Programming Language**.
 
-```text
-Frontend
-   │
-   ▼
-VCB IL
-   │
-   ▼
-Parse → Optimize → Lower → Regalloc → Emit
-   │
-   ▼
-x86-64 Intel Assembly
-```
+Its role is to transform the compiler representation produced by Vayu into native machine code through analysis, optimization, lowering, register allocation, instruction selection, and code generation.
 
-Structurally, VCB occupies the same kind of niche as **QBE**: it is a backend component rather than a complete compiler suite like LLVM or GCC.
+<div align="center">
 
-The intended boundary is simple:
+<a href="https://github.com/NotY215/Vayu">
+  <img src="https://raw.githubusercontent.com/NotY215/Vayu/master/assets/logo.svg" alt="Vayu Logo" width="100">
+</a>
+&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;
+<a href="https://github.com/NotY215/VCB">
+  <img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_logo.png" alt="VCB Logo" width="135">
+</a>
 
-- **Frontend:** understands the source language.
-- **VCB IL:** defines the compiler/backend boundary.
-- **VCB:** parses, analyzes, optimizes, lowers, allocates registers, selects instructions, and emits assembly.
-- **System toolchain:** assembles and links the generated assembly into an executable.
+<br><br>
 
-> **Status:** VCB is under active development. Performance figures described as targets are design goals, not completed VCB benchmark results.
+<a href="https://github.com/NotY215/Vayu">
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&size=18&duration=2800&pause=800&center=true&vCenter=true&width=760&lines=.vyu+%E2%86%92+Vayu+Compiler+%E2%86%92+.vcbir+%E2%86%92+VCB+%E2%86%92+Native+Machine+Code;Vayu+defines+the+language.+VCB+builds+the+native+backend.;Phase+23+%E2%80%94+Single-Binary+Native+Toolchain" alt="Animated Vayu and VCB pipeline">
+</a>
+
+</div>
+
+### The compiler boundary
+
+~~~text
+Vayu Source (.vyu)
+        │
+        ▼
+Vayu Compiler / Frontend
+        │
+        ▼
+      .vcbir
+        │
+        ▼
+        VCB
+        │
+        ▼
+Native Machine Code
+~~~
+
+### Vayu Source — .vyu
+
+Vayu programs are written using the **.vyu** extension.
+
+Examples:
+
+~~~text
+main.vyu
+game.vyu
+math.vyu
+~~~
+
+.vyu represents actual **Vayu source code**. It is not an intermediate representation and is not intended to follow the syntax of VCB, QBE, LLVM, or another compiler backend.
+
+### VCBIR — .vcbir
+
+Before Vayu code reaches VCB, it can be represented using VCB's internal intermediate representation:
+
+~~~text
+.vcbir
+~~~
+
+VCBIR provides the interface between the Vayu compiler and the VCB backend. It contains the compiler-level information required for backend analysis, optimization, lowering, register allocation, instruction selection, and native code generation.
+
+VCBIR is an **internal compiler representation**, not another programming language.
+
+### VCB
+
+VCB is written in **C++20** and is designed specifically around Vayu's requirements.
+
+Its backend responsibilities include:
+
+- Compiler analysis
+- SSA-based processing
+- Optimization
+- Control-flow handling
+- Lowering
+- Register allocation
+- Instruction selection
+- Peephole optimization
+- Target-specific processing
+- Native code generation
+
+VCB takes inspiration from compact backend architectures such as QBE, but **Vayu remains its language target**. VCB is not intended to be a generic compiler backend.
+
+### The Vayu Compiler Stack
+
+~~~text
+┌──────────────────────────────┐
+│        Vayu Program          │
+│           main.vyu           │
+└──────────────┬───────────────┘
+               │
+               ▼
+┌──────────────────────────────┐
+│       Vayu Compiler          │
+│          / Frontend          │
+└──────────────┬───────────────┘
+               │
+               ▼
+┌──────────────────────────────┐
+│            VCBIR             │
+│           .vcbir             │
+│      Internal Backend IR     │
+└──────────────┬───────────────┘
+               │
+               ▼
+┌──────────────────────────────┐
+│             VCB              │
+│     Vayu Compiler Backend    │
+└──────────────┬───────────────┘
+               │
+               ▼
+┌──────────────────────────────┐
+│     Native Machine Code      │
+└──────────────────────────────┘
+~~~
+
+> **Vayu defines the language. VCB turns Vayu into efficient native code.**
+
+---
+
+## Phase 23 — Single-Binary Native Toolchain
+
+Phase 23 moves Vayu from an external backend chain toward a **single-binary native toolchain**.
+
+### Previous direction
+
+~~~text
+Vayu → QBE → .s → gcc → executable
+~~~
+
+### Phase 23 direction
+
+~~~text
+Vayu Source (.vyu)
+        │
+        ▼
+   Vayu Compiler
+        │
+        ▼
+     .vcbir
+        │
+        ▼
+       VCB
+        │
+        ▼
+Native Machine Code
+        │
+        ▼
+   Vayu Executable
+~~~
+
+The target is to retire the **QBE → .s → gcc** backend chain. **vayuc** will link no external QBE or GCC backend and will use VCB for native code generation.
+
+The rollout is **Windows-first**, followed by **ELF** and **Mach-O** targets.
+
+> **Phase 23 status: future — VCB in development.**
 
 ---
 
@@ -329,32 +468,15 @@ VCB/
 
 ## Usage
 
-Compile VCB IL into assembly:
+VCB's Phase 23 direction is direct native code generation from Vayu's .vcbir representation.
 
-```bash
-vcb input.vcb -o out.s
-```
+~~~text
+.vyu → Vayu Compiler → .vcbir → VCB → Native Machine Code
+~~~
 
-Read IR from standard input:
+The exact single-binary vayuc invocation will be documented as the native backend integration is implemented.
 
-```bash
-vcb < input.vcb > out.s
-```
-
-Show help:
-
-```bash
-vcb --help
-```
-
-Example toolchain flow:
-
-```bash
-vcb input.vcb -o out.s
-gcc out.s -o out
-```
-
-For build and installation instructions, see **[build.md](build.md)**.
+For current build and development instructions, see **[build.md](build.md)**.
 
 ---
 
@@ -504,47 +626,45 @@ VCB is actively evolving. Its IL, ABI behavior, target support, APIs, and backen
 
 ## Vayu + VCB
 
-VCB is being developed alongside **Vayu** as its dedicated native backend.
-
 <div align="center">
 
 <a href="https://github.com/NotY215/Vayu">
-  <img src="https://raw.githubusercontent.com/NotY215/Vayu/master/assets/logo.svg" alt="Vayu Logo" width="100">
+  <img src="https://raw.githubusercontent.com/NotY215/Vayu/master/assets/logo.svg" alt="Vayu Logo" width="105">
 </a>
-
-&nbsp;&nbsp;→&nbsp;&nbsp;
-
+&nbsp;&nbsp;&nbsp;×&nbsp;&nbsp;&nbsp;
 <a href="https://github.com/NotY215/VCB">
   <img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_logo.png" alt="VCB Logo" width="140">
 </a>
 
+<br><br>
+
+<a href="https://github.com/NotY215/Vayu">
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&size=18&duration=2800&pause=800&center=true&vCenter=true&width=760&lines=.vyu+%E2%86%92+.vcbir+%E2%86%92+VCB+%E2%86%92+Native+Machine+Code;Vayu+defines+the+language.+VCB+builds+the+native+backend.;Single-Binary+Native+Toolchain" alt="Animated Vayu and VCB pipeline">
+</a>
+
 </div>
 
-Intended compiler flow:
-
-```text
+~~~text
 Vayu Source
-     │
-     ▼
-Vayu Frontend
-     │
-     ▼
-Vayu IR / Lowered Representation
-     │
-     ▼
-VCB IL
-     │
-     ▼
-VCB — Analysis / Optimization / Lowering / Regalloc / Codegen
-     │
-     ▼
-x86-64 Assembly
-     │
-     ▼
+    │
+    │ .vyu
+    ▼
+Vayu Compiler
+    │
+    ▼
+.vcbir
+    │
+    ▼
+VCB
+    │
+    ▼
+Native Machine Code
+    │
+    ▼
 Executable
-```
+~~~
 
-Keeping VCB separate from the Vayu frontend allows both projects to evolve independently while maintaining a clear compiler boundary.
+VCB is the dedicated native backend for Vayu. Keeping the frontend and backend separate preserves a clear compiler boundary while allowing the final vayuc toolchain to become self-contained.
 
 **[→ Vayu repository](https://github.com/NotY215/Vayu)**
 
@@ -552,23 +672,37 @@ Keeping VCB separate from the Vayu frontend allows both projects to evolve indep
 
 ## Roadmap
 
-- [ ] Finalize and document the VCB IL specification
-- [ ] Expand SSA and CFG analysis
-- [ ] Strengthen constant propagation and folding
-- [ ] Global value numbering (GVN)
-- [ ] Global code motion (GCM)
-- [ ] Loop optimizations
-- [ ] If-elimination
-- [ ] Improve register allocation
-- [ ] Improve phi resolution and lowering
-- [ ] Expand x86-64 instruction selection
-- [ ] Improve floating-point code generation
-- [ ] Expand calling-convention support
-- [ ] Add reproducible compile-time benchmarks
-- [ ] Add generated-code benchmarks
-- [ ] Integrate VCB with the Vayu frontend
-- [ ] Complete Vayu native compilation through VCB
-- [ ] Evaluate additional targets in the future
+| Phase | Direction | Status |
+|---:|---|---|
+| 18 | Tooling — LSP, formatter, linter, VS Code extension | Future |
+| 19 | GUI | Future |
+| 20 | Graphics | Future |
+| 21 | AI/ML | Future |
+| 22 | Package registry — vayu install, public index | Future |
+| **23** | **Single-binary toolchain — retire QBE + GCC backend chain; VCB emits native machine code directly. Windows-first, then ELF/Mach-O.** | **Future — VCB in development** |
+
+### Phase 23 target
+
+~~~text
+.vyu
+ │
+ ▼
+vayuc
+ │
+ ▼
+.vcbir
+ │
+ ▼
+VCB
+ │
+ ▼
+Native Machine Code
+ │
+ ▼
+Executable
+~~~
+
+The intended end state is a Vayu toolchain where **vayuc does not require QBE or GCC as its backend**.
 
 ---
 
