@@ -788,35 +788,3 @@ VCB is released under the **Apache License 2.0**.
 
 </div>
 
-
----
-
-## Visual Identity
-
-VCB uses the following project assets:
-
-| Asset | Purpose |
-|---|---|
-| `Assets/VCB_logo.png` | Primary VCB logo |
-| `Assets/VCB_Fav.png` | Compact icon / favicon asset |
-| `Assets/VCB_banner.svg` | Animated README banner |
-
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_logo.png" alt="VCB Logo" width="220">
-
-<br><br>
-
-<img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_Fav.png" alt="VCB Favicon" width="72">
-
-</div>
-
----
-
-<div align="center">
-
-**Vayu → `.vcbir` → VCB → Native Code**
-
-<sub>VCB is the backend for Vayu. `.vyu` is Vayu source. `.vcbir` is VCB's internal IR.</sub>
-
-</div>
