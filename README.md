@@ -15,7 +15,7 @@
   <img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_logo.png" alt="VCB Logo" width="150">
 </a>
 
-**A small, fast, self-contained native compiler backend for Vayu and other frontends.**
+**A compact, fast, self-contained compiler backend for VCB IL and Vayu.**
 
 <a href="https://github.com/NotY215/Vayu"><img src="https://img.shields.io/badge/Vayu-Language-111827?style=for-the-badge" alt="Vayu"></a>
 <a href="https://github.com/NotY215/VCB"><img src="https://img.shields.io/badge/VCB-Compiler%20Backend-111827?style=for-the-badge" alt="VCB"></a>
@@ -29,9 +29,9 @@
 
 ## What it is
 
-VCB is a **pure compiler backend written in C++20**. It consumes an SSA-based intermediate language called **VCB IL** and emits **x86-64 assembly in Intel syntax**, targeting the **System V ABI**.
+VCB is a **pure compiler backend written in C++20**. It consumes an SSA-based intermediate language called **VCB IL** and emits **x86-64 assembly in Intel syntax**, targeting the **System V AMD64 ABI**. It has no frontend, no language runtime, and no third-party compiler-framework dependency.
 
-VCB is a component, not a complete compiler suite. A frontend emits VCB IL; VCB handles parsing, analysis, optimization, lowering, register allocation, instruction selection, and assembly emission.
+VCB is a component, not a complete compiler suite. A frontend emits VCB IL; VCB handles parsing, analysis, optimization, lowering, register allocation, instruction selection, and assembly emission. Structurally, it occupies the same niche as QBE: the frontend owns the source language, while VCB owns the native backend.
 
 ~~~text
 Frontend
@@ -54,21 +54,21 @@ The architectural niche is similar to **QBE**: VCB is intended to sit underneath
 
 ## Core Goals
 
-### 1. Very fast compilation
+### 1. Compile-time performance
 
-The intended backend pipeline is deliberately short:
+The intended backend pipeline is deliberately short and direct:
 
 ~~~text
 parse → optimize → lower → regalloc → emit
 ~~~
 
-VCB avoids a large machine-IR framework, SelectionDAG-style infrastructure, and repeated representation rewrites.
+VCB avoids a separate machine-IR pipeline, SelectionDAG-style infrastructure, and unnecessary intermediate representation rewrites. The goal is to keep the backend close to a five-stage path: parse, optimize, lower, register-allocate, emit.
 
-The parser is designed around efficient primitives such as std::from_chars for numeric names and a custom open-addressing string interner for symbolic names. The goal is to keep parsing from becoming the bottleneck.
+The parser is designed around efficient primitives such as std::from_chars for numeric names and a custom open-addressing string interner for symbolic names. The goal is for parsing to remain a small fraction of total compilation time.
 
-### 2. QBE-class generated code
+### 2. Code quality in the QBE class
 
-VCB is targeting useful native performance while keeping the implementation small.
+VCB targets useful native performance while keeping the implementation small. This is a design target, not a claim that current VCB output already matches QBE 1.3.
 
 Current optimization work includes:
 
@@ -86,7 +86,7 @@ Planned optimization work includes:
 - If-elimination
 - Stronger register allocation
 
-### 3. A codebase one person can understand
+### 3. A codebase one person can hold in their head
 
 VCB deliberately avoids a huge compiler-framework architecture.
 
@@ -100,9 +100,9 @@ Design principles:
 - Explicit pass boundaries
 - Easy tracing from IR parsing to assembly emission
 
-The long-term target is a backend small enough to read end-to-end in an afternoon.
+The long-term target is **under 3,000 lines across seven core source files**, small enough for one developer to trace from parsing to assembly emission in an afternoon.
 
-### 4. Zero third-party dependencies
+### 4. Zero external dependencies
 
 VCB is designed without dependencies on:
 
@@ -112,7 +112,7 @@ VCB is designed without dependencies on:
 - zlib
 - External optimization frameworks
 
-The backend is written in C++20 and relies on the standard library plus the platform assembler/linker toolchain.
+The backend is written in C++20 and is intended to rely only on the standard library plus the platform assembler/linker toolchain. VCB does not depend on LLVM, Boost, ICU, zlib, or another external compiler framework.
 
 ---
 
@@ -142,7 +142,7 @@ This lets the frontend and backend evolve independently.
 
 ### Compiler researchers
 
-VCB is intended as a compact backend research and experimentation platform. Register allocation, SSA transformations, lowering, instruction selection, and code emission remain visible instead of being hidden behind a massive framework.
+VCB is intended as a compact backend research and experimentation platform. A new optimization pass should fit into a focused source unit, and a new x86-64 instruction-selection rule should remain close to the code generator. The linear-scan allocator is deliberately kept small and explicit.
 
 ### JITs and query compilers
 
@@ -331,7 +331,7 @@ For complete build and installation instructions, see **[build.md](build.md)**.
 
 ---
 
-## Performance Positioning
+## Performance Targets and Honest Comparison
 
 VCB's comparisons should be interpreted as architectural targets and references, not as claims that VCB has already reproduced another project's benchmark results.
 
@@ -360,7 +360,7 @@ This is an architectural hypothesis, not proof of a benchmark result. Fair compa
 
 VCB should not currently be described as matching QBE 1.3, LLVM, or GCC in generated-code performance without reproducible benchmarks.
 
-### Why the numbers vary
+### Why these numbers must not be treated as a ranking
 
 Compiler performance depends on:
 
@@ -373,7 +373,7 @@ Compiler performance depends on:
 - Target ISA features
 - Code-size requirements
 
-VCB therefore treats reproducible compile-time and runtime benchmarking as part of the project roadmap.
+These projects use different hardware, workloads, optimization settings, IRs, and measurement methods. The figures are therefore reference points rather than a universal ranking. VCB will publish its own reproducible compile-time and generated-code benchmarks before making strong performance claims.
 
 ---
 
@@ -392,6 +392,8 @@ VCB therefore treats reproducible compile-time and runtime benchmarking as part 
 ### VCB vs TPDE
 
 VCB is designed for very fast IR-to-assembly compilation. VCB IL is the backend's native input format, so the intended VCB path has no separate LLVM-IR-to-backend translation stage.
+
+TPDE's published work shows that IR translation can be a meaningful part of compilation latency in domain-specific pipelines. VCB's design removes that boundary by making VCB IL the compilation format itself.
 
 That does **not** prove VCB is faster. A meaningful comparison needs the same hardware, equivalent programs, equivalent output requirements, and reproducible measurements.
 
@@ -413,7 +415,7 @@ The intended differences are:
 - Vayu-first integration
 - Extensible backend architecture
 
-VCB's QBE-class runtime-performance target remains a target until backed by benchmarks.
+VCB's QBE 1.3-class runtime-performance target remains a target until backed by benchmarks. In particular, the current backend should not be described as already matching QBE 1.3.
 
 ---
 
@@ -571,6 +573,6 @@ VCB is released under the **Apache License 2.0**.
 
 <div align="center">
 
-**VCB — Small enough to understand. Fast enough to compile. Native by design.**
+**VCB — QBE's simplicity. TPDE's speed focus. VCB's own small native backend.**
 
 </div>
