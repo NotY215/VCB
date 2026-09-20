@@ -1,4 +1,33 @@
-# VCB — Vayu Compiler Backend
+<div align="center">
+
+<a href="https://github.com/NotY215/Vayu">
+  <img src="https://raw.githubusercontent.com/NotY215/Vayu/master/assets/logo.svg" alt="Vayu Logo" width="150">
+</a>
+
+# VCB
+
+### Vayu Compiler Backend
+
+<a href="https://github.com/NotY215/Vayu">
+  <img src="https://raw.githubusercontent.com/NotY215/Vayu/master/assets/logo.svg" alt="Vayu Logo" width="90">
+</a>
+&nbsp;&nbsp;&nbsp;
+<a href="https://github.com/NotY215/VCB">
+  <img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_logo.png" alt="VCB Logo" width="150">
+</a>
+
+**The native backend and code-generation layer of the Vayu programming language.**
+
+<a href="https://github.com/NotY215/Vayu">
+  <img src="https://img.shields.io/badge/Vayu-Language-111827?style=for-the-badge" alt="Vayu">
+</a>
+<a href="https://github.com/NotY215/VCB">
+  <img src="https://img.shields.io/badge/VCB-Native%20Backend-111827?style=for-the-badge" alt="VCB">
+</a>
+
+</div>
+
+---
 
 > **VCB (Vayu Compiler Backend)** is the native backend and code-generation layer of the [Vayu programming language](https://github.com/NotY215/Vayu), designed to turn Vayu's intermediate representation into optimized x86-64 assembly.
 
@@ -225,6 +254,49 @@ The backend is under active development. Planned work includes:
 - [ ] Integration with the Vayu frontend
 - [ ] Native Vayu-to-executable compilation pipeline
 - [ ] Additional target architectures in the future
+
+## 🔗 Vayu + VCB
+
+VCB is being developed as a focused native backend within the **Vayu compiler ecosystem**.
+
+<div align="center">
+
+<a href="https://github.com/NotY215/Vayu">
+  <img src="https://raw.githubusercontent.com/NotY215/Vayu/master/assets/logo.svg" alt="Vayu Logo" width="100">
+</a>
+&nbsp;&nbsp;→&nbsp;&nbsp;
+<a href="https://github.com/NotY215/VCB">
+  <img src="https://raw.githubusercontent.com/NotY215/VCB/master/Assets/VCB_logo.png" alt="VCB Logo" width="140">
+</a>
+
+</div>
+
+The intended compiler flow is:
+
+```text
+Vayu Source
+     │
+     ▼
+Vayu Frontend
+     │
+     ▼
+Vayu IR
+     │
+     ▼
+VCB — Analysis / Optimization / Lowering / Codegen
+     │
+     ▼
+Native Assembly
+     │
+     ▼
+Executable
+```
+
+VCB and Vayu are maintained as separate repositories so the language frontend and native backend can evolve independently while remaining part of the same compiler ecosystem.
+
+**[→ Vayu repository](https://github.com/NotY215/Vayu)**
+
+---
 
 ## Relationship with Vayu
 
