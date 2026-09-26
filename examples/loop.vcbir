@@ -1,0 +1,30 @@
+; vcb-ir v1
+; sum(1..N) via a loop.  Expected exit code for N=10 is 55.
+
+func sum_upto(n: i64) -> i64 {
+entry:
+  i64 %zero = const.i64 0
+  i64 %one  = const.i64 1
+  jmp loop
+
+loop:
+  i64 %i   = phi %one  [entry], %next_i   [body]
+  i64 %acc = phi %zero [entry], %next_acc [body]
+  i64 %cmp = lt %i, n
+  br %cmp, body, done
+
+body:
+  i64 %next_acc = add %acc, %i
+  i64 %next_i   = add %i, %one
+  jmp loop
+
+done:
+  ret %acc
+}
+
+func main() -> i64 {
+entry:
+  i64 %n = const.i64 10
+  i64 %r = call sum_upto(%n)
+  ret %r
+}

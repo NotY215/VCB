@@ -40,8 +40,6 @@ namespace vcb {
                 if (pos >= src.size()) return "";
                 char c = src[pos];
 
-                // Two-char arrow must be recognised before the number
-                // branch and before the single-punct fallback.
                 if (c == '-' && pos + 1 < src.size() && src[pos + 1] == '>') {
                     pos += 2;
                     return std::string("->");
@@ -56,7 +54,7 @@ namespace vcb {
                             d == '.' || d == '%' || d == '@') {
                             ++pos; continue;
                         }
-                        if (d == '<') { // ptr<T>
+                        if (d == '<') {
                             int depth = 1; ++pos;
                             while (pos < src.size() && depth > 0) {
                                 if (src[pos] == '<') ++depth;
@@ -207,6 +205,7 @@ namespace vcb {
                 while (!lx.atEnd()) {
                     std::string save = lx.peek();
                     if (save == "}") break;
+
                     size_t savePos = lx.pos; int saveLine = lx.line;
                     std::string maybeLabel = lx.next();
                     if (lx.eat(":")) {
@@ -217,43 +216,53 @@ namespace vcb {
 
                     Op op;
                     op.line = lx.line;
+
+                    // Peek the <type> %name = prefix BEFORE consuming the
+                    // op token.  Otherwise the op token is never matched
+                    // against the result-type slot and every typed op
+                    // falls through to `copy`.
+                    bool hasPrefix = false;
+                    if (isResultType(lx)) {
+                        size_t savePos2 = lx.pos; int saveLine2 = lx.line;
+                        Type rt = parseType(lx);
+                        std::string candidate = lx.next();
+                        if (candidate.size() > 0 && candidate[0] == '%' &&
+                            lx.eat("=")) {
+                            op.type = rt;
+                            op.dst = candidate;
+                            hasPrefix = true;
+                        }
+                        else {
+                            lx.pos = savePos2; lx.line = saveLine2;
+                        }
+                    }
+
                     std::string tok = lx.next();
 
                     if (tok.rfind("const.", 0) == 0) {
                         std::string suffix = tok.substr(6);
                         if (suffix == "f32" || suffix == "f64") {
                             op.kind = OpKind::ConstF;
-                            op.type = (suffix == "f32") ? Type::F32 : Type::F64;
+                            if (!hasPrefix)
+                                op.type = (suffix == "f32") ? Type::F32 : Type::F64;
                         }
                         else {
                             op.kind = OpKind::ConstI;
-                            if (suffix == "i1")  op.type = Type::I1;
-                            else if (suffix == "i8")  op.type = Type::I8;
-                            else if (suffix == "i16") op.type = Type::I16;
-                            else if (suffix == "i32") op.type = Type::I32;
-                            else if (suffix == "i64") op.type = Type::I64;
-                            else throw ParseError("bad const type '" + suffix + "'",
-                                lx.line);
+                            if (!hasPrefix) {
+                                if (suffix == "i1")  op.type = Type::I1;
+                                else if (suffix == "i8")  op.type = Type::I8;
+                                else if (suffix == "i16") op.type = Type::I16;
+                                else if (suffix == "i32") op.type = Type::I32;
+                                else if (suffix == "i64") op.type = Type::I64;
+                                else throw ParseError("bad const type '" + suffix +
+                                    "'", lx.line);
+                            }
                         }
                         std::string val = lx.next();
                         if (op.kind == OpKind::ConstF) op.immF = std::stod(val);
                         else                           op.immI = std::stoll(val, nullptr, 0);
                         blk.ops.push_back(std::move(op));
                         continue;
-                    }
-
-                    if (isResultType(lx)) {
-                        size_t savePos2 = lx.pos; int saveLine2 = lx.line;
-                        Type rt = parseType(lx);
-                        std::string candidate = lx.next();
-                        if (candidate.size() > 0 && candidate[0] == '%' && lx.eat("=")) {
-                            op.type = rt;
-                            op.dst = candidate;
-                            tok = lx.next();
-                        }
-                        else {
-                            lx.pos = savePos2; lx.line = saveLine2;
-                        }
                     }
 
                     op.kind = tokenToOp(tok);
@@ -283,8 +292,11 @@ namespace vcb {
                         op.targetTrue = lx.next();
                     }
                     else if (op.kind == OpKind::Br) {
+                        // br <cond>, <true_label>, <false_label>
+                        op.args.push_back(lx.next());
+                        lx.expect(",", "between br condition and true target");
                         op.targetTrue = lx.next();
-                        lx.expect(",", "between br operands");
+                        lx.expect(",", "between br true and false target");
                         op.targetFalse = lx.next();
                     }
                     else if (op.kind == OpKind::Phi) {

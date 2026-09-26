@@ -21,7 +21,8 @@ namespace vcb {
         void printOp(std::ostringstream& o, const Op& op) {
             if (!op.dst.empty()) {
                 o << "  " << typeName(op.type) << " " << op.dst << " = ";
-            } else {
+            }
+            else {
                 o << "  ";
             }
 
@@ -54,7 +55,7 @@ namespace vcb {
             case OpKind::And: case OpKind::Or:  case OpKind::Xor:
             case OpKind::Shl: case OpKind::Shr:
                 o << opName(op.kind) << " " << op.args.at(0)
-                  << ", " << op.args.at(1);
+                    << ", " << op.args.at(1);
                 break;
             case OpKind::Call:
                 o << "call " << op.callee << "(";
@@ -72,7 +73,10 @@ namespace vcb {
                 o << "jmp " << op.targetTrue;
                 break;
             case OpKind::Br:
-                o << "br " << op.targetTrue << ", " << op.targetFalse;
+                // br <cond>, <true>, <false>
+                o << "br ";
+                if (!op.args.empty()) o << op.args.at(0) << ", ";
+                o << op.targetTrue << ", " << op.targetFalse;
                 break;
             case OpKind::Phi: {
                 o << "phi ";
