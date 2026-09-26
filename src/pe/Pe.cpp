@@ -36,7 +36,8 @@ namespace vcb {
         const uint32_t sectHeaderSize = 40;
 
         const uint32_t headersEnd =
-            peOffset + 4 + coffHeaderSize + optHeaderSize + numSections * sectHeaderSize;
+            peOffset + 4 + coffHeaderSize + optHeaderSize +
+            numSections * sectHeaderSize;
         const uint32_t sizeOfHeaders = alignUp(headersEnd, fileAlignment);
 
         const uint32_t textRawSize = alignUp((uint32_t)in.text->size(), fileAlignment);
@@ -118,7 +119,7 @@ namespace vcb {
         put32(out, p + 1 * 8 + 0, in.importRva);
         put32(out, p + 1 * 8 + 4, in.importSize);
         put32(out, p + 12 * 8 + 0, in.iatRva);
-        put32(out, p + 12 * 8 + 4, 16);
+        put32(out, p + 12 * 8 + 4, in.iatSize);
         p += 128;
 
         std::memcpy(&out[p + 0], ".text\0\0\0", 8);

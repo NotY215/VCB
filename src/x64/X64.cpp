@@ -1,4 +1,5 @@
 #include "vcb/X64.hpp"
+#include "vcb/Runtime.hpp"
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -94,9 +95,9 @@ namespace vcb {
                 rex(true, b2, a); b(0x39);
                 b(0xC0 | ((b2 & 7) << 3) | (a & 7));
             }
-            void setcc(uint8_t cc, uint8_t reg) {
+            void setcc(uint8_t fullOpcode, uint8_t reg) {
                 if (reg >= 4 && reg <= 7) rex(false, 0, reg);
-                b(0x0F); b(0x90 + cc);
+                b(0x0F); b(fullOpcode);
                 b(0xC0 | (reg & 7));
             }
             void movzxReg8(uint8_t dst, uint8_t src) {
@@ -117,13 +118,11 @@ namespace vcb {
                 rex(false, src, dst); b(0x89);
                 b(0xC0 | ((src & 7) << 3) | (dst & 7));
             }
-            // mov dst, [base]   (base must NOT be RSP or RBP)
             void movRegIndReg(uint8_t dst, uint8_t base) {
                 rex(true, dst, base);
                 b(0x8B);
                 b(0x00 | ((dst & 7) << 3) | (base & 7));
             }
-            // mov [base], src   (base must NOT be RSP or RBP)
             void movIndRegReg(uint8_t base, uint8_t src) {
                 rex(true, src, base);
                 b(0x89);
@@ -137,7 +136,6 @@ namespace vcb {
 
             void jmpRel32Placeholder() { b(0xE9); b32(0); }
             void jnzRel32Placeholder() { b(0x0F); b(0x85); b32(0); }
-            void jzRel32Placeholder() { b(0x0F); b(0x84); b32(0); }
             void callRel32Placeholder() { b(0xE8); b32(0); }
             void callIndirectRip() { b(0xFF); b(0x15); b32(0); }
             void ret() { b(0xC3); }
@@ -145,12 +143,11 @@ namespace vcb {
             void pushRbp() { b(0x55); }
             void int3() { b(0xCC); }
             void subRspImm32(uint32_t imm) { b(0x48); b(0x81); b(0xEC); b32(imm); }
-            void addRspImm32(uint32_t imm) { b(0x48); b(0x81); b(0xC4); b32(imm); }
         };
 
         struct Frame {
-            std::unordered_map<std::string, int> slot;           // SSA name -> slot index
-            std::unordered_map<std::string, int> alloca_offset;  // alloca dst -> distance below rbp
+            std::unordered_map<std::string, int> slot;
+            std::unordered_map<std::string, int> alloca_offset;
             int nSlots = 0;
             int frameSize = 0;
         };
@@ -164,7 +161,6 @@ namespace vcb {
                     if (!op.dst.empty()) f.slot[op.dst] = i++;
             f.nSlots = i;
 
-            // Reserve 8 bytes per alloca op, below the value slots.
             int na = 0;
             for (auto& blk : fn.blocks) {
                 for (auto& op : blk.ops) {
@@ -187,7 +183,7 @@ namespace vcb {
 
         struct BlockFixup {
             uint32_t    pos;
-            std::string target;   // block name within the current function
+            std::string target;
         };
 
         class FunctionEmitter {
@@ -255,9 +251,6 @@ namespace vcb {
                 a_.storeRbp(-(it->second + 1) * 8, reg);
             }
 
-            // Emit stores for every phi in `target` whose incoming block
-            // matches `pred`.  Called at the terminator of `pred` before the
-            // jump to `target`.
             void emitPhiStores(const std::string& target, const std::string& pred) {
                 auto it = phisByBlock_.find(target);
                 if (it == phisByBlock_.end()) return;
@@ -325,17 +318,17 @@ namespace vcb {
                     load(op.args.at(0), RAX);
                     load(op.args.at(1), RCX);
                     a_.cmpReg(RAX, RCX);
-                    uint8_t cc = 0;
+                    uint8_t opc = 0;
                     switch (op.kind) {
-                    case OpKind::Eq: cc = 0x94; break;
-                    case OpKind::Ne: cc = 0x95; break;
-                    case OpKind::Lt: cc = 0x9C; break;
-                    case OpKind::Le: cc = 0x9E; break;
-                    case OpKind::Gt: cc = 0x9F; break;
-                    case OpKind::Ge: cc = 0x9D; break;
+                    case OpKind::Eq: opc = 0x94; break;
+                    case OpKind::Ne: opc = 0x95; break;
+                    case OpKind::Lt: opc = 0x9C; break;
+                    case OpKind::Le: opc = 0x9E; break;
+                    case OpKind::Gt: opc = 0x9F; break;
+                    case OpKind::Ge: opc = 0x9D; break;
                     default: break;
                     }
-                    a_.setcc(cc, RAX);
+                    a_.setcc(opc, RAX);
                     a_.movzxReg8(RAX, RAX);
                     store(op.dst, RAX);
                     break;
@@ -352,13 +345,13 @@ namespace vcb {
                 }
                 case OpKind::Load:
                     load(op.args.at(0), RAX);
-                    a_.movRegIndReg(RAX, RAX);      // mov rax, [rax]
+                    a_.movRegIndReg(RAX, RAX);
                     store(op.dst, RAX);
                     break;
                 case OpKind::Store:
-                    load(op.args.at(0), RAX);       // value
-                    load(op.args.at(1), RCX);       // pointer
-                    a_.movIndRegReg(RCX, RAX);      // mov [rcx], rax
+                    load(op.args.at(0), RAX);
+                    load(op.args.at(1), RCX);
+                    a_.movIndRegReg(RCX, RAX);
                     break;
 
                 case OpKind::Jmp: {
@@ -375,22 +368,18 @@ namespace vcb {
                     load(op.args.at(0), RAX);
                     a_.testReg(RAX);
 
-                    // jnz Ltrue
                     uint32_t jnzRelPos = (uint32_t)text_.size() + 2;
                     a_.jnzRel32Placeholder();
 
-                    // false path: phi stores for false target, then jmp
                     emitPhiStores(op.targetFalse, currentBlock_);
                     uint32_t jmpFPos = (uint32_t)text_.size() + 1;
                     a_.jmpRel32Placeholder();
                     blockFixups_.push_back({ jmpFPos, op.targetFalse });
 
-                    // Ltrue: patch jnz rel32 to fall right here
                     uint32_t here = (uint32_t)text_.size();
                     int32_t rel = (int32_t)here - (int32_t)(jnzRelPos + 4);
                     std::memcpy(&text_[jnzRelPos], &rel, 4);
 
-                    // true path: phi stores for true target, then jmp
                     emitPhiStores(op.targetTrue, currentBlock_);
                     uint32_t jmpTPos = (uint32_t)text_.size() + 1;
                     a_.jmpRel32Placeholder();
@@ -399,7 +388,6 @@ namespace vcb {
                 }
 
                 case OpKind::Phi:
-                    // No code at the definition site; see emitPhiStores.
                     break;
 
                 case OpKind::Call: {
@@ -429,46 +417,121 @@ namespace vcb {
             }
         };
 
-        // -------- .idata layout (kernel32!ExitProcess) -----------------------
+        struct ImportSpec {
+            std::string              dll;
+            std::vector<std::string> funcs;
+        };
 
-        static const uint32_t IDATA_IMPORT_OFF = 0x00;
-        static const uint32_t IDATA_ILT_OFF = 0x28;
-        static const uint32_t IDATA_IAT_OFF = 0x38;
-        static const uint32_t IDATA_HN_OFF = 0x48;
-        static const uint32_t IDATA_DLL_OFF = 0x58;
-        static const uint32_t IDATA_SIZE = 0x70;
+        struct ImportLayout {
+            std::vector<uint8_t>                      idata;
+            uint32_t                                  importRva = 0;
+            uint32_t                                  importSize = 0;
+            uint32_t                                  iatRva = 0;
+            uint32_t                                  iatSize = 0;
+            std::unordered_map<std::string, uint32_t> iatByName;
+        };
 
-        void put32(std::vector<uint8_t>& v, uint32_t off, uint32_t x) {
-            v[off + 0] = (uint8_t)(x);
-            v[off + 1] = (uint8_t)(x >> 8);
-            v[off + 2] = (uint8_t)(x >> 16);
-            v[off + 3] = (uint8_t)(x >> 24);
-        }
+        ImportLayout buildImports(uint32_t idataRva,
+            const std::vector<ImportSpec>& imports) {
+            const uint32_t DESC_SIZE = 40;
+            uint32_t descTotal = DESC_SIZE * (uint32_t)(imports.size() + 1);
 
-        void buildIdata(std::vector<uint8_t>& idata, uint32_t idataRva) {
-            idata.assign(IDATA_SIZE, 0);
-            uint32_t iltRva = idataRva + IDATA_ILT_OFF;
-            uint32_t iatRva = idataRva + IDATA_IAT_OFF;
-            uint32_t hnRva = idataRva + IDATA_HN_OFF;
-            uint32_t dllRva = idataRva + IDATA_DLL_OFF;
+            uint32_t iltTotal = 0, iatTotal = 0;
+            for (auto& im : imports) {
+                uint32_t n = (uint32_t)im.funcs.size() + 1;
+                iltTotal += n * 8;
+                iatTotal += n * 8;
+            }
 
-            put32(idata, IDATA_IMPORT_OFF + 0, iltRva);
-            put32(idata, IDATA_IMPORT_OFF + 4, 0);
-            put32(idata, IDATA_IMPORT_OFF + 8, 0);
-            put32(idata, IDATA_IMPORT_OFF + 12, dllRva);
-            put32(idata, IDATA_IMPORT_OFF + 16, iatRva);
+            std::vector<uint32_t> hintOffsets;
+            uint32_t hintTotal = 0;
+            for (auto& im : imports) {
+                for (auto& f : im.funcs) {
+                    hintOffsets.push_back(hintTotal);
+                    uint32_t len = 2 + (uint32_t)f.size() + 1;
+                    if (len & 1) ++len;
+                    hintTotal += len;
+                }
+            }
 
-            uint64_t hn = (uint64_t)hnRva;
-            std::memcpy(&idata[IDATA_ILT_OFF + 0], &hn, 8);
-            std::memcpy(&idata[IDATA_IAT_OFF + 0], &hn, 8);
+            std::vector<uint32_t> dllNameOffsets;
+            uint32_t dllNamesTotal = 0;
+            for (auto& im : imports) {
+                dllNameOffsets.push_back(dllNamesTotal);
+                uint32_t len = (uint32_t)im.dll.size() + 1;
+                if (len & 1) ++len;
+                dllNamesTotal += len;
+            }
 
-            const char* name = "ExitProcess";
-            idata[IDATA_HN_OFF + 0] = 0;
-            idata[IDATA_HN_OFF + 1] = 0;
-            std::memcpy(&idata[IDATA_HN_OFF + 2], name, std::strlen(name) + 1);
+            uint32_t offDesc = 0;
+            uint32_t offIlt = offDesc + descTotal;
+            uint32_t offIat = offIlt + iltTotal;
+            uint32_t offHint = offIat + iatTotal;
+            uint32_t offDll = offHint + hintTotal;
+            uint32_t total = offDll + dllNamesTotal;
 
-            const char* dll = "kernel32.dll";
-            std::memcpy(&idata[IDATA_DLL_OFF], dll, std::strlen(dll) + 1);
+            ImportLayout L;
+            L.idata.assign(total, 0);
+            L.importRva = idataRva + offDesc;
+            L.importSize = descTotal;
+            L.iatRva = idataRva + offIat;
+            L.iatSize = iatTotal;
+
+            auto putU32 = [&](uint32_t at, uint32_t v) {
+                L.idata[at + 0] = (uint8_t)(v);
+                L.idata[at + 1] = (uint8_t)(v >> 8);
+                L.idata[at + 2] = (uint8_t)(v >> 16);
+                L.idata[at + 3] = (uint8_t)(v >> 24);
+                };
+            auto putU64 = [&](uint32_t at, uint64_t v) {
+                for (int i = 0; i < 8; ++i) L.idata[at + i] = (uint8_t)(v >> (8 * i));
+                };
+
+            uint32_t iltCur = offIlt;
+            uint32_t iatCur = offIat;
+            uint32_t hintCur = 0;
+
+            for (size_t di = 0; di < imports.size(); ++di) {
+                uint32_t descAt = offDesc + (uint32_t)di * DESC_SIZE;
+                uint32_t thisIlt = iltCur;
+                uint32_t thisIat = iatCur;
+                uint32_t thisDll = idataRva + offDll + dllNameOffsets[di];
+
+                putU32(descAt + 0, idataRva + thisIlt);
+                putU32(descAt + 4, 0);
+                putU32(descAt + 8, 0);
+                putU32(descAt + 12, thisDll);
+                putU32(descAt + 16, idataRva + thisIat);
+
+                for (size_t fi = 0; fi < imports[di].funcs.size(); ++fi) {
+                    uint32_t hnRva = idataRva + offHint + hintOffsets[hintCur];
+
+                    putU64(thisIlt + (uint32_t)fi * 8, (uint64_t)hnRva);
+                    putU64(thisIat + (uint32_t)fi * 8, (uint64_t)hnRva);
+
+                    L.iatByName[imports[di].funcs[fi]] =
+                        idataRva + thisIat + (uint32_t)fi * 8;
+
+                    uint32_t hnAt = offHint + hintOffsets[hintCur];
+                    L.idata[hnAt + 0] = 0;
+                    L.idata[hnAt + 1] = 0;
+                    std::memcpy(&L.idata[hnAt + 2],
+                        imports[di].funcs[fi].c_str(),
+                        imports[di].funcs[fi].size() + 1);
+                    ++hintCur;
+                }
+
+                iltCur += ((uint32_t)imports[di].funcs.size() + 1) * 8;
+                iatCur += ((uint32_t)imports[di].funcs.size() + 1) * 8;
+            }
+
+            for (size_t di = 0; di < imports.size(); ++di) {
+                std::memcpy(&L.idata[offDll + dllNameOffsets[di]],
+                    imports[di].dll.c_str(),
+                    imports[di].dll.size() + 1);
+            }
+
+            return L;
         }
 
     } // namespace
@@ -479,33 +542,59 @@ namespace vcb {
         const uint32_t textRva = 0x1000;
         const uint32_t textLimit = r.idataRva - textRva;
 
-        std::vector<CallFixup> callFixups;
-        std::unordered_map<std::string, uint32_t> funcOffsets;
+        std::vector<ImportSpec> imports = {
+            { "kernel32.dll", { "ExitProcess", "GetStdHandle", "WriteFile" } }
+        };
+        ImportLayout layout = buildImports(r.idataRva, imports);
 
+        r.idata = std::move(layout.idata);
+        r.importRva = layout.importRva;
+        r.importSize = layout.importSize;
+        r.iatRva = layout.iatRva;
+        r.iatSize = layout.iatSize;
+
+        uint32_t iatExitProcess = layout.iatByName.at("ExitProcess");
+        uint32_t iatGetStdHandle = layout.iatByName.at("GetStdHandle");
+        uint32_t iatWriteFile = layout.iatByName.at("WriteFile");
+
+        auto symbolOffsets = emitRuntime(r.text, textRva,
+            iatGetStdHandle, iatWriteFile,
+            iatExitProcess);
+
+        std::vector<CallFixup> callFixups;
         std::unordered_map<std::string, Frame> frames;
-        for (auto& fn : m.functions) frames[fn.name] = layoutFunction(fn);
 
         for (auto& fn : m.functions) {
-            funcOffsets[fn.name] = (uint32_t)r.text.size();
+            if (symbolOffsets.count(fn.name))
+                throw std::runtime_error(
+                    "codegen: function '" + fn.name +
+                    "' conflicts with a runtime symbol");
+            frames[fn.name] = layoutFunction(fn);
+        }
+
+        for (auto& fn : m.functions) {
+            symbolOffsets[fn.name] = (uint32_t)r.text.size();
             FunctionEmitter fe(r.text, fn, frames[fn.name], callFixups);
             fe.run();
         }
 
-        // Entry stub: call main, pass eax to ExitProcess.
+        if (!symbolOffsets.count("main"))
+            throw std::runtime_error(
+                "codegen: no 'main' function defined; cannot build an executable");
+
         r.entryOffset = (uint32_t)r.text.size();
         {
             Asm a(r.text);
-            a.subRspImm32(40);                              // 32 shadow + 8 align
+            a.subRspImm32(40);
             uint32_t callPos = (uint32_t)r.text.size() + 1;
             a.callRel32Placeholder();
             callFixups.push_back({ callPos, "main" });
-            a.mov32RegReg(RCX, RAX);                        // mov ecx, eax
+            a.mov32RegReg(RCX, RAX);
             uint32_t iatRelPos = (uint32_t)r.text.size() + 2;
             a.callIndirectRip();
             a.int3();
-            uint32_t iatRva = r.idataRva + IDATA_IAT_OFF;
             uint32_t instrRva = textRva + (iatRelPos - 2);
-            int32_t  rel = (int32_t)iatRva - (int32_t)(instrRva + 6);
+            int32_t  rel = (int32_t)iatExitProcess - (int32_t)(instrRva + 6);
             std::memcpy(&r.text[iatRelPos], &rel, 4);
         }
 
@@ -514,18 +603,14 @@ namespace vcb {
                 "codegen: .text exceeds 0x1000 bytes; layout needs widening");
 
         for (auto& cf : callFixups) {
-            auto it = funcOffsets.find(cf.target);
-            if (it == funcOffsets.end())
+            auto it = symbolOffsets.find(cf.target);
+            if (it == symbolOffsets.end())
                 throw std::runtime_error(
                     "codegen: undefined function '" + cf.target + "'");
             int32_t rel = (int32_t)it->second - (int32_t)(cf.pos + 4);
             std::memcpy(&r.text[cf.pos], &rel, 4);
         }
 
-        buildIdata(r.idata, r.idataRva);
-        r.iatRva = r.idataRva + IDATA_IAT_OFF;
-        r.importRva = r.idataRva + IDATA_IMPORT_OFF;
-        r.importSize = 40;
         return r;
     }
 

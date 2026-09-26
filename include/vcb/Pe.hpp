@@ -11,6 +11,7 @@ namespace vcb {
         uint32_t                    textRva = 0x1000;
         uint32_t                    idataRva = 0x2000;
         uint32_t                    iatRva = 0;
+        uint32_t                    iatSize = 0;
         uint32_t                    importRva = 0;
         uint32_t                    importSize = 0;
     };

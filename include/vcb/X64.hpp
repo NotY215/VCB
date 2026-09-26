@@ -10,6 +10,7 @@ namespace vcb {
         std::vector<uint8_t> idata;
         uint32_t             entryOffset = 0;
         uint32_t             iatRva = 0;
+        uint32_t             iatSize = 0;
         uint32_t             importRva = 0;
         uint32_t             importSize = 0;
         uint32_t             idataRva = 0;

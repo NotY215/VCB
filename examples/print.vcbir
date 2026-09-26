@@ -1,0 +1,29 @@
+; vcb-ir v1
+; Smoke-test for the runtime intrinsics.
+; Expected stdout:
+;   true
+;   false
+;   <blank line>
+;   -12345
+;   999999999999
+; Expected exit code: 0
+
+func main() -> i64 {
+entry:
+  i64 %t = const.i64 1
+  call vayu_print_bool(%t)
+
+  i64 %f = const.i64 0
+  call vayu_print_bool(%f)
+
+  call vayu_print_ln()
+
+  i64 %neg = const.i64 -12345
+  call vayu_print_int(%neg)
+
+  i64 %big = const.i64 999999999999
+  call vayu_print_int(%big)
+
+  i64 %zero = const.i64 0
+  ret %zero
+}

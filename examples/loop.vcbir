@@ -1,5 +1,5 @@
 ; vcb-ir v1
-; sum(1..N) via a loop.  Expected exit code for N=10 is 55.
+; sum(1..N) inclusive via a loop.  For N=10 the exit code is 55.
 
 func sum_upto(n: i64) -> i64 {
 entry:
@@ -10,7 +10,7 @@ entry:
 loop:
   i64 %i   = phi %one  [entry], %next_i   [body]
   i64 %acc = phi %zero [entry], %next_acc [body]
-  i64 %cmp = lt %i, n
+  i64 %cmp = le %i, n
   br %cmp, body, done
 
 body:

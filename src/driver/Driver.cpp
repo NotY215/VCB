@@ -24,7 +24,7 @@ namespace vcb {
         }
 
         int cmdVersion() {
-            std::printf("vcb 0.2.0 (Phase 26 Part 2)\n");
+            std::printf("vcb 0.3.0 (Phase 26 Part 2c)\n");
             return 0;
         }
 
@@ -65,6 +65,7 @@ namespace vcb {
                 pi.textRva = 0x1000;
                 pi.idataRva = cg.idataRva;
                 pi.iatRva = cg.iatRva;
+                pi.iatSize = cg.iatSize;
                 pi.importRva = cg.importRva;
                 pi.importSize = cg.importSize;
 
