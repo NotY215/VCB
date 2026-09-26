@@ -18,7 +18,7 @@ namespace vcb {
             void skipWs() {
                 for (;;) {
                     while (pos < src.size() &&
-                           (src[pos] == ' ' || src[pos] == '\t' ||
+                        (src[pos] == ' ' || src[pos] == '\t' ||
                             src[pos] == '\r')) ++pos;
                     if (pos < src.size() && src[pos] == ';') {
                         while (pos < src.size() && src[pos] != '\n') ++pos;
@@ -35,20 +35,27 @@ namespace vcb {
 
             bool atEnd() { skipWs(); return pos >= src.size(); }
 
-            // Read the next token.  Recognises: identifiers (including
-            // dotted forms like "const.i64" and "%t0"), punctuation,
-            // integers, floats.
             std::string next() {
                 skipWs();
                 if (pos >= src.size()) return "";
                 char c = src[pos];
+
+                // Two-char arrow must be recognised before the number
+                // branch and before the single-punct fallback.
+                if (c == '-' && pos + 1 < src.size() && src[pos + 1] == '>') {
+                    pos += 2;
+                    return std::string("->");
+                }
+
                 if (std::isalpha((unsigned char)c) || c == '_' || c == '%' ||
                     c == '@') {
                     size_t start = pos++;
                     while (pos < src.size()) {
                         char d = src[pos];
                         if (std::isalnum((unsigned char)d) || d == '_' ||
-                            d == '.' || d == '%' || d == '@') { ++pos; continue; }
+                            d == '.' || d == '%' || d == '@') {
+                            ++pos; continue;
+                        }
                         if (d == '<') { // ptr<T>
                             int depth = 1; ++pos;
                             while (pos < src.size() && depth > 0) {
@@ -64,10 +71,10 @@ namespace vcb {
                 }
                 if (std::isdigit((unsigned char)c) ||
                     (c == '-' && pos + 1 < src.size() &&
-                     std::isdigit((unsigned char)src[pos + 1]))) {
+                        std::isdigit((unsigned char)src[pos + 1]))) {
                     size_t start = pos++;
                     while (pos < src.size() &&
-                           (std::isdigit((unsigned char)src[pos]) ||
+                        (std::isdigit((unsigned char)src[pos]) ||
                             src[pos] == '.' || src[pos] == 'e' ||
                             src[pos] == 'E' || src[pos] == '+' ||
                             src[pos] == '-' || src[pos] == 'x')) {
@@ -77,7 +84,6 @@ namespace vcb {
                     }
                     return src.substr(start, pos - start);
                 }
-                // single punctuation
                 pos++;
                 return std::string(1, c);
             }
@@ -125,8 +131,8 @@ namespace vcb {
         bool isResultType(Lexer& lx) {
             std::string t = lx.peek();
             return t == "i1" || t == "i8" || t == "i16" || t == "i32" ||
-                   t == "i64" || t == "f32" || t == "f64" || t == "void" ||
-                   t == "ptr" || t.rfind("ptr<", 0) == 0;
+                t == "i64" || t == "f32" || t == "f64" || t == "void" ||
+                t == "ptr" || t.rfind("ptr<", 0) == 0;
         }
 
         OpKind tokenToOp(const std::string& t) {
@@ -164,7 +170,7 @@ namespace vcb {
 
         Function parseFunction(Lexer& lx) {
             Function fn;
-            fn.name = lx.next();   // "func"
+            fn.name = lx.next();
             if (fn.name != "func")
                 throw ParseError("expected 'func', found '" + fn.name + "'", lx.line);
             fn.name = lx.next();
@@ -192,10 +198,8 @@ namespace vcb {
                 std::string name = lx.next();
                 if (lx.eat(":")) {
                     blk.name = name;
-                } else {
-                    blk.name = "entry";
-                    // Not a label — it's an op.  Reconstruct by pushing
-                    // the token back.  Simpler: only support labelled form.
+                }
+                else {
                     throw ParseError("expected ':' after block label '" + name +
                         "'", lx.line);
                 }
@@ -203,7 +207,6 @@ namespace vcb {
                 while (!lx.atEnd()) {
                     std::string save = lx.peek();
                     if (save == "}") break;
-                    // A new block label?
                     size_t savePos = lx.pos; int saveLine = lx.line;
                     std::string maybeLabel = lx.next();
                     if (lx.eat(":")) {
@@ -221,15 +224,16 @@ namespace vcb {
                         if (suffix == "f32" || suffix == "f64") {
                             op.kind = OpKind::ConstF;
                             op.type = (suffix == "f32") ? Type::F32 : Type::F64;
-                        } else {
+                        }
+                        else {
                             op.kind = OpKind::ConstI;
-                            if      (suffix == "i1")  op.type = Type::I1;
+                            if (suffix == "i1")  op.type = Type::I1;
                             else if (suffix == "i8")  op.type = Type::I8;
                             else if (suffix == "i16") op.type = Type::I16;
                             else if (suffix == "i32") op.type = Type::I32;
                             else if (suffix == "i64") op.type = Type::I64;
                             else throw ParseError("bad const type '" + suffix + "'",
-                                                  lx.line);
+                                lx.line);
                         }
                         std::string val = lx.next();
                         if (op.kind == OpKind::ConstF) op.immF = std::stod(val);
@@ -238,10 +242,7 @@ namespace vcb {
                         continue;
                     }
 
-                    // Optional result: <type> %name =
                     if (isResultType(lx)) {
-                        // Save; only treat as a result if the next three
-                        // tokens are <type> %name = <op>
                         size_t savePos2 = lx.pos; int saveLine2 = lx.line;
                         Type rt = parseType(lx);
                         std::string candidate = lx.next();
@@ -249,14 +250,14 @@ namespace vcb {
                             op.type = rt;
                             op.dst = candidate;
                             tok = lx.next();
-                        } else {
+                        }
+                        else {
                             lx.pos = savePos2; lx.line = saveLine2;
                         }
                     }
 
                     op.kind = tokenToOp(tok);
 
-                    // Parse args
                     if (op.kind == OpKind::Call) {
                         op.callee = lx.next();
                         lx.expect("(", "after callee in call");
@@ -268,20 +269,25 @@ namespace vcb {
                                 break;
                             }
                         }
-                    } else if (op.kind == OpKind::Ret) {
+                    }
+                    else if (op.kind == OpKind::Ret) {
                         if (lx.eat("void")) {
                             // ret void
-                        } else {
+                        }
+                        else {
                             std::string a = lx.peek();
                             if (!a.empty() && a != "}") op.args.push_back(lx.next());
                         }
-                    } else if (op.kind == OpKind::Jmp) {
+                    }
+                    else if (op.kind == OpKind::Jmp) {
                         op.targetTrue = lx.next();
-                    } else if (op.kind == OpKind::Br) {
+                    }
+                    else if (op.kind == OpKind::Br) {
                         op.targetTrue = lx.next();
                         lx.expect(",", "between br operands");
                         op.targetFalse = lx.next();
-                    } else if (op.kind == OpKind::Phi) {
+                    }
+                    else if (op.kind == OpKind::Phi) {
                         for (;;) {
                             std::string v = lx.next();
                             lx.expect("[", "after phi value");
@@ -291,21 +297,22 @@ namespace vcb {
                             if (lx.eat(",")) continue;
                             break;
                         }
-                    } else if (op.kind == OpKind::Alloca) {
+                    }
+                    else if (op.kind == OpKind::Alloca) {
                         op.type = parseType(lx);
-                    } else if (op.kind == OpKind::Load || op.kind == OpKind::Store ||
-                               op.kind == OpKind::Neg || op.kind == OpKind::Copy ||
-                               op.kind == OpKind::Bitcast ||
-                               op.kind == OpKind::Sitof ||
-                               op.kind == OpKind::Fptosi) {
-                        // unary / load: 1 arg.  store: 2 args.
+                    }
+                    else if (op.kind == OpKind::Load || op.kind == OpKind::Store ||
+                        op.kind == OpKind::Neg || op.kind == OpKind::Copy ||
+                        op.kind == OpKind::Bitcast ||
+                        op.kind == OpKind::Sitof ||
+                        op.kind == OpKind::Fptosi) {
                         op.args.push_back(lx.next());
                         if (op.kind == OpKind::Store) {
                             lx.expect(",", "between store operands");
                             op.args.push_back(lx.next());
                         }
-                    } else {
-                        // binary
+                    }
+                    else {
                         op.args.push_back(lx.next());
                         lx.expect(",", "between binary operands");
                         op.args.push_back(lx.next());
@@ -327,7 +334,8 @@ namespace vcb {
             std::string save = lx.peek();
             if (save == "func") {
                 m.functions.push_back(parseFunction(lx));
-            } else {
+            }
+            else {
                 throw ParseError("expected 'func' at top level, found '" + save +
                     "'  (in " + origin + ")", lx.line);
             }

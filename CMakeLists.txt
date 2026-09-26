@@ -18,6 +18,8 @@ add_executable(vcb
     src/ir/Ir.cpp
     src/ir/Parser.cpp
     src/ir/Printer.cpp
+    src/x64/X64.cpp
+    src/pe/Pe.cpp
     src/driver/Driver.cpp
 )
 
