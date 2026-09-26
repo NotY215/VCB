@@ -1,7 +1,0 @@
-export function i32 main() {
-entry:
-    %a = add i32 3, 0
-    %b = add i32 %a, 4
-    %c = copy i32 %b
-    ret i32 %c
-}

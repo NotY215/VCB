@@ -1,0 +1,16 @@
+; vcb-ir v1
+; Minimal round-trip test.  Two functions, one call.
+
+func add(a: i64, b: i64) -> i64 {
+entry:
+  i64 %t0 = add a, b
+  ret %t0
+}
+
+func main() -> i64 {
+entry:
+  i64 %t0 = const.i64 40
+  i64 %t1 = const.i64 2
+  i64 %t2 = call add(%t0, %t1)
+  ret %t2
+}

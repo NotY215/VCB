@@ -1,6 +1,4 @@
-.idea/
-build/
-.vs/
-.vscode/
-*.user
-cmake-build-*/
+.vs
+build
+.idea
+out

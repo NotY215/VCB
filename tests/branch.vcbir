@@ -1,9 +1,0 @@
-export function i32 main() {
-entry:
-    %1 = clt i32 3, 7
-    jnz %1, yes, no
-yes:
-    ret i32 42
-no:
-    ret i32 7
-}

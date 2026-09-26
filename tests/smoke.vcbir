@@ -1,6 +1,0 @@
-export function i32 main() {
-entry:
-    %1 = add i32 5, 3
-    %2 = mul i32 %1, 2
-    ret i32 %2
-}

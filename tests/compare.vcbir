@@ -1,7 +1,0 @@
-export function i32 main() {
-entry:
-    %1 = cgt i32 9, 4
-    %2 = clt i32 5, 5
-    %3 = xor i32 %1, %2
-    ret i32 %3
-}

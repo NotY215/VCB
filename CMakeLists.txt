@@ -1,51 +1,24 @@
 cmake_minimum_required(VERSION 3.20)
-project(VCB CXX)
+project(VCB LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# Force Release build type unless the caller explicitly overrides.
-if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+if(MSVC)
+    add_compile_options(/W4 /permissive- /Zc:__cplusplus /utf-8 /EHsc)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-set(VCB_CORE_SOURCES
-    src/analysis.cpp
-    src/optimization.cpp
-    src/lowering.cpp
-    src/target.cpp
-    src/codegen.cpp
-    src/parser.cpp
-    src/regalloc.cpp
-    src/peephole.cpp
+add_executable(vcb
+    src/main.cpp
+    src/ir/Ir.cpp
+    src/ir/Parser.cpp
+    src/ir/Printer.cpp
+    src/driver/Driver.cpp
 )
 
-# --- vcb (main executable) ---
-add_executable(vcb src/main.cpp ${VCB_CORE_SOURCES} "src/peephole.cpp")
-target_include_directories(vcb PRIVATE include)
-
-# --- vcb-tests ---
-add_executable(vcb-tests test/tests.cpp ${VCB_CORE_SOURCES} "src/peephole.cpp")
-target_include_directories(vcb-tests PRIVATE include)
-
-# --- Compiler-specific flags ---
-if (MSVC)
-    foreach (tgt vcb vcb-tests)
-        target_compile_options(${tgt} PRIVATE
-            /W4
-            $<$<CONFIG:Release>:/O2 /GL /fp:fast>
-            $<$<CONFIG:Release>:/MT>
-        )
-        target_link_options(${tgt} PRIVATE
-            $<$<CONFIG:Release>:/LTCG>
-        )
-    endforeach()
-else()
-    foreach (tgt vcb vcb-tests)
-        target_compile_options(${tgt} PRIVATE
-            -O2 -Wall -Wextra
-            $<$<CONFIG:Release>:-static>
-        )
-    endforeach()
-endif()
+target_include_directories(vcb PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
