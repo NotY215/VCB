@@ -49,7 +49,14 @@ namespace vcb {
             }
 
             void callRip(uint32_t iatRva) {
-                uint32_t insnStartAbs = textRva + baseOffset + (uint32_t)body.size();
+                // `body` is the whole .text buffer.  Its size here is the
+                // absolute offset of the call instruction, so textRva +
+                // body.size() is the absolute RVA.  Adding baseOffset on
+                // top (as the previous version did) double-counts every
+                // byte of runtime emitted before this function and shifts
+                // the displacement to a garbage target — the 0xC0000005
+                // we saw from print.exe.
+                uint32_t insnStartAbs = textRva + (uint32_t)body.size();
                 body.push_back(0xFF);
                 body.push_back(0x15);
                 int32_t rel = (int32_t)iatRva - (int32_t)(insnStartAbs + 6);
