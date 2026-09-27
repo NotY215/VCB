@@ -93,6 +93,40 @@ namespace vcb {
                 return t;
             }
 
+            // Read a quoted string starting at the current position.
+            // Handles \" \\ \n \t \r escapes; passes everything else
+            // through verbatim.  Advances past the closing quote.
+            std::string readQuoted() {
+                skipWs();
+                if (pos >= src.size() || src[pos] != '"')
+                    throw ParseError("expected '\"'", line);
+                ++pos;
+                std::string out;
+                while (pos < src.size() && src[pos] != '"') {
+                    char c = src[pos];
+                    if (c == '\\' && pos + 1 < src.size()) {
+                        char e = src[pos + 1];
+                        pos += 2;
+                        switch (e) {
+                        case 'n': out += '\n'; break;
+                        case 't': out += '\t'; break;
+                        case 'r': out += '\r'; break;
+                        case '"': out += '"';  break;
+                        case '\\': out += '\\'; break;
+                        default:   out += e;    break;
+                        }
+                        continue;
+                    }
+                    if (c == '\n') ++line;
+                    out += c;
+                    ++pos;
+                }
+                if (pos >= src.size())
+                    throw ParseError("unterminated string literal", line);
+                ++pos;
+                return out;
+            }
+
             bool eat(const char* tok) {
                 skipWs();
                 size_t savePos = pos;
@@ -137,6 +171,17 @@ namespace vcb {
             if (t == "copy")    return OpKind::Copy;
             if (t == "add")     return OpKind::Add;
             if (t == "sub")     return OpKind::Sub;
+            if (t == "fadd")    return OpKind::FAdd;
+            if (t == "fsub")    return OpKind::FSub;
+            if (t == "fmul")    return OpKind::FMul;
+            if (t == "fdiv")    return OpKind::FDiv;
+            if (t == "fneg")    return OpKind::FNeg;
+            if (t == "fcmp_lt") return OpKind::FCmpLT;
+            if (t == "fcmp_le") return OpKind::FCmpLE;
+            if (t == "fcmp_gt") return OpKind::FCmpGT;
+            if (t == "fcmp_ge") return OpKind::FCmpGE;
+            if (t == "fcmp_eq") return OpKind::FCmpEQ;
+            if (t == "fcmp_ne") return OpKind::FCmpNE;
             if (t == "mul")     return OpKind::Mul;
             if (t == "div")     return OpKind::Div;
             if (t == "mod")     return OpKind::Mod;
@@ -239,6 +284,13 @@ namespace vcb {
 
                     std::string tok = lx.next();
 
+                    if (tok == "const.str") {
+                        op.kind = OpKind::ConstStr;
+                        op.strVal = lx.readQuoted();
+                        if (!hasPrefix) op.type = Type::Ptr;
+                        blk.ops.push_back(std::move(op));
+                        continue;
+                    }
                     if (tok.rfind("const.", 0) == 0) {
                         std::string suffix = tok.substr(6);
                         if (suffix == "f32" || suffix == "f64") {
@@ -317,7 +369,8 @@ namespace vcb {
                         op.kind == OpKind::Neg || op.kind == OpKind::Copy ||
                         op.kind == OpKind::Bitcast ||
                         op.kind == OpKind::Sitof ||
-                        op.kind == OpKind::Fptosi) {
+                        op.kind == OpKind::Fptosi ||
+                        op.kind == OpKind::FNeg) {
                         op.args.push_back(lx.next());
                         if (op.kind == OpKind::Store) {
                             lx.expect(",", "between store operands");

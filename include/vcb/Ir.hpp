@@ -15,11 +15,14 @@ namespace vcb {
     const char* typeName(Type t);
 
     enum class OpKind {
-        ConstI,  ConstF,
+        ConstI, ConstF,
+        ConstStr,
         Copy,
         Add, Sub, Mul, Div, Mod, Neg,
         Eq, Ne, Lt, Le, Gt, Ge,
         And, Or, Xor, Shl, Shr,
+        FAdd, FSub, FMul, FDiv, FNeg,
+        FCmpLT, FCmpLE, FCmpGT, FCmpGE, FCmpEQ, FCmpNE,
         Call, Ret,
         Jmp, Br, Phi,
         Alloca, Load, Store,
@@ -35,6 +38,7 @@ namespace vcb {
         std::vector<std::string>        args;
         int64_t                         immI = 0;
         double                          immF = 0.0;
+        std::string                     strVal;
         std::string                     callee;
         std::string                     targetTrue;
         std::string                     targetFalse;

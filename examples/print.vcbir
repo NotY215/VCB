@@ -1,5 +1,9 @@
 ; vcb-ir v1
 ; Smoke-test for the runtime intrinsics.
+; The runtime vayu_print_bool / vayu_print_int do NOT append a
+; newline; vayu_print_ln does.  Callers that want one line per
+; value must emit both.
+;
 ; Expected stdout:
 ;   true
 ;   false
@@ -12,17 +16,21 @@ func main() -> i64 {
 entry:
   i64 %t = const.i64 1
   call vayu_print_bool(%t)
+  call vayu_print_ln()
 
   i64 %f = const.i64 0
   call vayu_print_bool(%f)
+  call vayu_print_ln()
 
   call vayu_print_ln()
 
   i64 %neg = const.i64 -12345
   call vayu_print_int(%neg)
+  call vayu_print_ln()
 
   i64 %big = const.i64 999999999999
   call vayu_print_int(%big)
+  call vayu_print_ln()
 
   i64 %zero = const.i64 0
   ret %zero

@@ -20,11 +20,12 @@ namespace vcb {
                 "  vcb version                                print version\n"
                 "  vcb dump    <file.vcbir>                   parse and pretty-print\n"
                 "  vcb build   <file.vcbir> -o <out> [--target pe]\n"
-                "                                             emit a native image\n");
+                "                                             emit a native image\n"
+                "  vcb headers <file.exe>                     dump a PE header\n");
         }
 
         int cmdVersion() {
-            std::printf("vcb 0.3.0 (Phase 26 Part 2c)\n");
+            std::printf("vcb 0.3.3 (Phase 26 Part 2d.3, atomic write)\n");
             return 0;
         }
 
@@ -71,13 +72,11 @@ namespace vcb {
 
                 std::vector<uint8_t> image = writePe(pi);
 
-                std::FILE* f = std::fopen(output.c_str(), "wb");
-                if (!f) {
-                    std::fprintf(stderr, "vcb: cannot write '%s'\n", output.c_str());
-                    return 1;
-                }
-                std::fwrite(image.data(), 1, image.size(), f);
-                std::fclose(f);
+                // Atomic write via temp + rename.  Fixes the
+                // "Access is denied" race where Defender holds an
+                // exclusive handle on a just-created file.
+                int wrc = writePeAtomic(output, image);
+                if (wrc != 0) return 1;
                 std::printf("vcb: wrote %s (%zu bytes)\n",
                     output.c_str(), image.size());
                 return 0;
@@ -111,6 +110,14 @@ namespace vcb {
                 return 2;
             }
             return cmdDump(argv[2]);
+        }
+
+        if (std::strcmp(cmd, "headers") == 0) {
+            if (argc < 3) {
+                std::fprintf(stderr, "vcb: headers requires a path\n");
+                return 2;
+            }
+            return dumpPeHeaders(argv[2]);
         }
 
         if (std::strcmp(cmd, "build") == 0) {

@@ -33,11 +33,27 @@ namespace vcb {
             case OpKind::ConstF:
                 o << formatConstF(op.type, op.immF);
                 break;
+            case OpKind::ConstStr: {
+                o << "const.str \"";
+                for (char c : op.strVal) {
+                    if (c == '\\') o << "\\\\";
+                    else if (c == '"')  o << "\\\"";
+                    else if (c == '\n') o << "\\n";
+                    else if (c == '\t') o << "\\t";
+                    else if (c == '\r') o << "\\r";
+                    else                o << c;
+                }
+                o << "\"";
+                break;
+            }
             case OpKind::Copy:
                 o << "copy " << op.args.at(0);
                 break;
             case OpKind::Neg:
                 o << "neg " << op.args.at(0);
+                break;
+            case OpKind::FNeg:
+                o << "fneg " << op.args.at(0);
                 break;
             case OpKind::Bitcast:
                 o << "bitcast " << op.args.at(0);
@@ -54,6 +70,11 @@ namespace vcb {
             case OpKind::Le:  case OpKind::Gt:  case OpKind::Ge:
             case OpKind::And: case OpKind::Or:  case OpKind::Xor:
             case OpKind::Shl: case OpKind::Shr:
+            case OpKind::FAdd: case OpKind::FSub:
+            case OpKind::FMul: case OpKind::FDiv:
+            case OpKind::FCmpLT: case OpKind::FCmpLE:
+            case OpKind::FCmpGT: case OpKind::FCmpGE:
+            case OpKind::FCmpEQ: case OpKind::FCmpNE:
                 o << opName(op.kind) << " " << op.args.at(0)
                     << ", " << op.args.at(1);
                 break;

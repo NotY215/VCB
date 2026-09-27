@@ -1,5 +1,17 @@
 #include "vcb/Pe.hpp"
+#include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#  include <io.h>      // _commit, _fileno
+#else
+#  include <unistd.h>
+#  include <fcntl.h>
+#endif
 
 namespace vcb {
 
@@ -20,19 +32,55 @@ namespace vcb {
         }
         uint32_t alignUp(uint32_t x, uint32_t a) { return (x + a - 1) & ~(a - 1); }
 
+        uint32_t computeChecksum(const std::vector<uint8_t>& file,
+            uint32_t checksumFieldOffset) {
+            uint32_t sum = 0;
+            size_t   n = file.size();
+            size_t   i = 0;
+            while (i + 1 < n) {
+                if (i == checksumFieldOffset) { i += 4; continue; }
+                uint32_t word = (uint32_t)file[i] | ((uint32_t)file[i + 1] << 8);
+                sum += word;
+                sum = (sum & 0xFFFF) + (sum >> 16);
+                i += 2;
+            }
+            if (n & 1) {
+                sum += (uint32_t)file[n - 1];
+                sum = (sum & 0xFFFF) + (sum >> 16);
+            }
+            sum = (sum & 0xFFFF) + (sum >> 16);
+            sum = (sum & 0xFFFF) + (sum >> 16);
+            return sum + (uint32_t)n;
+        }
+
+        uint16_t getU16(const std::vector<uint8_t>& f, size_t off) {
+            return (uint16_t)f[off] | ((uint16_t)f[off + 1] << 8);
+        }
+        uint32_t getU32(const std::vector<uint8_t>& f, size_t off) {
+            return  (uint32_t)f[off]
+                | ((uint32_t)f[off + 1] << 8)
+                | ((uint32_t)f[off + 2] << 16)
+                | ((uint32_t)f[off + 3] << 24);
+        }
+        uint64_t getU64(const std::vector<uint8_t>& f, size_t off) {
+            uint64_t v = 0;
+            for (int i = 0; i < 8; ++i) v |= ((uint64_t)f[off + i] << (8 * i));
+            return v;
+        }
+
     } // namespace
 
     std::vector<uint8_t> writePe(const PeInputs& in) {
         const uint32_t sectionAlignment = 0x1000;
         const uint32_t fileAlignment = 0x200;
         const uint64_t imageBase = 0x140000000ULL;
+        const uint32_t numSections = 2;   // .text, .idata
 
         const uint32_t dosHeaderSize = 64;
         const uint32_t dosStubSize = 64;
         const uint32_t peOffset = dosHeaderSize + dosStubSize;
         const uint32_t coffHeaderSize = 20;
         const uint32_t optHeaderSize = 240;
-        const uint32_t numSections = 2;
         const uint32_t sectHeaderSize = 40;
 
         const uint32_t headersEnd =
@@ -47,8 +95,9 @@ namespace vcb {
 
         const uint32_t totalFileSize = idataRawOffset + idataRawSize;
 
-        const uint32_t textVirtualSize = (uint32_t)in.text->size();
-        const uint32_t idataVirtualSize = (uint32_t)in.idata->size();
+        const uint32_t textVirtualSize = textRawSize;
+        const uint32_t idataVirtualSize = idataRawSize;
+
         const uint32_t textEndRva = in.textRva + alignUp(textVirtualSize, sectionAlignment);
         const uint32_t idataEndRva = in.idataRva + alignUp(idataVirtualSize, sectionAlignment);
         const uint32_t sizeOfImage = idataEndRva > textEndRva ? idataEndRva : textEndRva;
@@ -106,8 +155,8 @@ namespace vcb {
         put32(out, p + 56, sizeOfImage);
         put32(out, p + 60, sizeOfHeaders);
         put32(out, p + 64, 0);
-        put16(out, p + 68, 3);
-        put16(out, p + 70, 0x8160);
+        put16(out, p + 68, 3);              // Subsystem = CUI
+        put16(out, p + 70, 0x8160);         // ASLR + HIGHENT + NX + TSA
         put64(out, p + 72, 0x100000ULL);
         put64(out, p + 80, 0x1000ULL);
         put64(out, p + 88, 0x100000ULL);
@@ -149,7 +198,173 @@ namespace vcb {
         std::memcpy(&out[textRawOffset], in.text->data(), in.text->size());
         std::memcpy(&out[idataRawOffset], in.idata->data(), in.idata->size());
 
+        uint32_t checksumOff = peOffset + 4 + 20 + 64;
+        uint32_t cksum = computeChecksum(out, checksumOff);
+        put32(out, checksumOff, cksum);
+
         return out;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Atomic file write.  Write to <path>.tmp, flush, close, rename onto
+    // <path>.  MoveFileEx on Windows, rename on POSIX.
+    // ---------------------------------------------------------------------------
+
+    int writePeAtomic(const std::string& finalPath,
+        const std::vector<uint8_t>& bytes) {
+        std::string tmp = finalPath + ".tmp";
+
+        std::FILE* fp = std::fopen(tmp.c_str(), "wb");
+        if (!fp) {
+            std::fprintf(stderr, "vcb: cannot write '%s'\n", tmp.c_str());
+            return 1;
+        }
+        size_t written = std::fwrite(bytes.data(), 1, bytes.size(), fp);
+        std::fflush(fp);
+#ifdef _WIN32
+        _commit(_fileno(fp));
+#else
+        fsync(fileno(fp));
+#endif
+        std::fclose(fp);
+        if (written != bytes.size()) {
+            std::fprintf(stderr, "vcb: short write to '%s'\n", tmp.c_str());
+            std::remove(tmp.c_str());
+            return 1;
+        }
+
+#ifdef _WIN32
+        if (!MoveFileExA(tmp.c_str(), finalPath.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            DWORD err = GetLastError();
+            std::fprintf(stderr,
+                "vcb: cannot rename '%s' to '%s' (winerr=%lu)\n",
+                tmp.c_str(), finalPath.c_str(), (unsigned long)err);
+            std::remove(tmp.c_str());
+            return 1;
+        }
+#else
+        if (std::rename(tmp.c_str(), finalPath.c_str()) != 0) {
+            std::fprintf(stderr, "vcb: cannot rename '%s' to '%s'\n",
+                tmp.c_str(), finalPath.c_str());
+            std::remove(tmp.c_str());
+            return 1;
+        }
+#endif
+
+        return 0;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Read-only header dump for `vcb headers <file>`.
+    // ---------------------------------------------------------------------------
+
+    int dumpPeHeaders(const std::string& path) {
+        std::FILE* fp = std::fopen(path.c_str(), "rb");
+        if (!fp) {
+            std::fprintf(stderr, "vcb: cannot open '%s'\n", path.c_str());
+            return 1;
+        }
+        std::fseek(fp, 0, SEEK_END);
+        long long sz = std::ftell(fp);
+        std::fseek(fp, 0, SEEK_SET);
+        if (sz <= 0) { std::fclose(fp); return 1; }
+        std::vector<uint8_t> f((size_t)sz);
+        std::fread(f.data(), 1, (size_t)sz, fp);
+        std::fclose(fp);
+
+        if (f.size() < 0x40 || f[0] != 'M' || f[1] != 'Z') {
+            std::fprintf(stderr, "vcb: '%s' is not a PE file (bad MZ)\n",
+                path.c_str());
+            return 1;
+        }
+        uint32_t pe = getU32(f, 0x3C);
+        if (pe + 0x18 > f.size()) {
+            std::fprintf(stderr, "vcb: e_lfanew out of range\n");
+            return 1;
+        }
+        if (f[pe] != 'P' || f[pe + 1] != 'E') {
+            std::fprintf(stderr, "vcb: no PE signature at 0x%X\n", pe);
+            return 1;
+        }
+
+        size_t coff = pe + 4;
+        size_t opt = coff + 20;
+        size_t optEnd = opt + getU16(f, coff + 16);
+        uint16_t numSects = getU16(f, coff + 2);
+
+        std::printf("file size          : %lld bytes\n", sz);
+        std::printf("e_lfanew           : 0x%X\n", pe);
+        std::printf("Machine            : 0x%04X\n", getU16(f, coff + 0));
+        std::printf("NumberOfSections   : %u\n", numSects);
+        std::printf("SizeOfOptionalHdr  : %u\n", getU16(f, coff + 16));
+        std::printf("Characteristics    : 0x%04X\n", getU16(f, coff + 18));
+        std::printf("Magic              : 0x%04X\n", getU16(f, opt + 0));
+        std::printf("SizeOfCode         : 0x%X\n", getU32(f, opt + 4));
+        std::printf("SizeOfInitData     : 0x%X\n", getU32(f, opt + 8));
+        std::printf("SizeOfUninitData   : 0x%X\n", getU32(f, opt + 12));
+        std::printf("AddressOfEntryPoint: 0x%X\n", getU32(f, opt + 16));
+        std::printf("BaseOfCode         : 0x%X\n", getU32(f, opt + 20));
+        std::printf("ImageBase          : 0x%llX\n", (unsigned long long)getU64(f, opt + 24));
+        std::printf("SectionAlignment   : 0x%X\n", getU32(f, opt + 32));
+        std::printf("FileAlignment      : 0x%X\n", getU32(f, opt + 36));
+        std::printf("SizeOfImage        : 0x%X\n", getU32(f, opt + 56));
+        std::printf("SizeOfHeaders      : 0x%X\n", getU32(f, opt + 60));
+        std::printf("CheckSum           : 0x%X\n", getU32(f, opt + 64));
+        std::printf("Subsystem          : %u\n", getU16(f, opt + 68));
+        std::printf("DllCharacteristics : 0x%04X  (ASLR=%d NX=%d HIGHENT=%d)\n",
+            getU16(f, opt + 70),
+            (getU16(f, opt + 70) & 0x0040) ? 1 : 0,
+            (getU16(f, opt + 70) & 0x0100) ? 1 : 0,
+            (getU16(f, opt + 70) & 0x0020) ? 1 : 0);
+        std::printf("NumberOfRvaAndSizes: %u\n", getU32(f, opt + 108));
+
+        if (optEnd + 40 * numSects > f.size()) {
+            std::printf("(section headers truncated)\n");
+            return 0;
+        }
+        for (uint32_t i = 0; i < numSects; ++i) {
+            size_t s = optEnd + 40 * i;
+            char name[9] = { 0 };
+            std::memcpy(name, &f[s], 8);
+            std::printf("  section[%u] '%s'  vsize=0x%X  vaddr=0x%X  "
+                "rawsz=0x%X  rawoff=0x%X  flags=0x%X\n",
+                i, name,
+                getU32(f, s + 8), getU32(f, s + 12),
+                getU32(f, s + 16), getU32(f, s + 20),
+                getU32(f, s + 36));
+        }
+
+        // Dump the first 64 bytes of the entry point.  This is the code
+        // the OS will execute first after the loader hands control over.
+        {
+            uint32_t entry = getU32(f, opt + 16);
+            for (uint32_t i = 0; i < numSects; ++i) {
+                size_t s = optEnd + 40 * i;
+                char name[9] = { 0 };
+                std::memcpy(name, &f[s], 8);
+                uint32_t vaddr = getU32(f, s + 12);
+                uint32_t vsize = getU32(f, s + 8);
+                uint32_t rawoff = getU32(f, s + 20);
+                if (entry < vaddr || entry >= vaddr + vsize) continue;
+
+                size_t eoff = rawoff + (entry - vaddr);
+                std::printf("entry stub (64 bytes at file offset 0x%zX, RVA 0x%X):\n",
+                    eoff, entry);
+                for (int row = 0; row < 4; ++row) {
+                    std::printf("  %04zX: ", eoff + row * 16);
+                    for (int col = 0; col < 16; ++col) {
+                        size_t k = eoff + row * 16 + col;
+                        if (k < f.size()) std::printf("%02X ", f[k]);
+                        else              std::printf("   ");
+                    }
+                    std::printf("\n");
+                }
+                break;
+            }
+        }
+
+        return 0;
     }
 
 } // namespace vcb

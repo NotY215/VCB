@@ -18,6 +18,10 @@ namespace vcb {
             R12 = 12, R13 = 13, R14 = 14, R15 = 15
         };
 
+        enum Xmm : uint8_t {
+            XMM0 = 0, XMM1 = 1, XMM2 = 2, XMM3 = 3
+        };
+
         struct Asm {
             std::vector<uint8_t>& c;
             explicit Asm(std::vector<uint8_t>& v) : c(v) {}
@@ -134,15 +138,83 @@ namespace vcb {
                 b(0xC0 | ((reg & 7) << 3) | (reg & 7));
             }
 
+            // ---- SSE2 float helpers -------------------------------------
+
+            void movqXmmFromGpr(uint8_t xmm, uint8_t gpr) {
+                b(0x66);
+                uint8_t rexByte = 0x48;
+                if (xmm >= 8) rexByte |= 0x04;
+                if (gpr >= 8) rexByte |= 0x01;
+                b(rexByte);
+                b(0x0F); b(0x6E);
+                b(0xC0 | ((xmm & 7) << 3) | (gpr & 7));
+            }
+            void movqGprFromXmm(uint8_t gpr, uint8_t xmm) {
+                b(0x66);
+                uint8_t rexByte = 0x48;
+                if (xmm >= 8) rexByte |= 0x04;
+                if (gpr >= 8) rexByte |= 0x01;
+                b(rexByte);
+                b(0x0F); b(0x7E);
+                b(0xC0 | ((xmm & 7) << 3) | (gpr & 7));
+            }
+            void ssd(uint8_t opcodeByte, uint8_t dst, uint8_t src) {
+                b(0xF2); b(0x0F); b(opcodeByte);
+                uint8_t rexByte = 0x40;
+                if (dst >= 8) rexByte |= 0x04;
+                if (src >= 8) rexByte |= 0x01;
+                if (rexByte != 0x40) b(rexByte);
+                b(0xC0 | ((dst & 7) << 3) | (src & 7));
+            }
+            void addsd(uint8_t dst, uint8_t src) { ssd(0x58, dst, src); }
+            void subsd(uint8_t dst, uint8_t src) { ssd(0x5C, dst, src); }
+            void mulsd(uint8_t dst, uint8_t src) { ssd(0x59, dst, src); }
+            void divsd(uint8_t dst, uint8_t src) { ssd(0x5E, dst, src); }
+
+            void comisd(uint8_t a, uint8_t b2) {
+                b(0x66);
+                uint8_t rexByte = 0x40;
+                if (a >= 8) rexByte |= 0x04;
+                if (b2 >= 8) rexByte |= 0x01;
+                if (rexByte != 0x40) b(rexByte);
+                b(0x0F); b(0x2F);
+                b(0xC0 | ((a & 7) << 3) | (b2 & 7));
+            }
+            void cvtsi2sd(uint8_t xmm, uint8_t gpr) {
+                b(0xF2);
+                uint8_t rexByte = 0x48;
+                if (xmm >= 8) rexByte |= 0x04;
+                if (gpr >= 8) rexByte |= 0x01;
+                b(rexByte);
+                b(0x0F); b(0x2A);
+                b(0xC0 | ((xmm & 7) << 3) | (gpr & 7));
+            }
+            void cvttsd2si(uint8_t gpr, uint8_t xmm) {
+                b(0xF2);
+                uint8_t rexByte = 0x48;
+                if (gpr >= 8) rexByte |= 0x04;
+                if (xmm >= 8) rexByte |= 0x01;
+                b(rexByte);
+                b(0x0F); b(0x2C);
+                b(0xC0 | ((gpr & 7) << 3) | (xmm & 7));
+            }
+            void xorpd(uint8_t dst, uint8_t src) {
+                b(0x66);
+                b(0x0F); b(0x57);
+                b(0xC0 | ((dst & 7) << 3) | (src & 7));
+            }
+
+            // ---- control flow -------------------------------------------
+
             void jmpRel32Placeholder() { b(0xE9); b32(0); }
             void jnzRel32Placeholder() { b(0x0F); b(0x85); b32(0); }
             void callRel32Placeholder() { b(0xE8); b32(0); }
-            void callIndirectRip() { b(0xFF); b(0x15); b32(0); }
             void ret() { b(0xC3); }
             void leave() { b(0xC9); }
             void pushRbp() { b(0x55); }
             void int3() { b(0xCC); }
             void subRspImm32(uint32_t imm) { b(0x48); b(0x81); b(0xEC); b32(imm); }
+            void addRspImm32(uint32_t imm) { b(0x48); b(0x81); b(0xC4); b32(imm); }
         };
 
         struct Frame {
@@ -186,12 +258,37 @@ namespace vcb {
             std::string target;
         };
 
+        struct StringFixup {
+            uint32_t pos;
+            uint32_t blobOff;
+        };
+
+        struct StringTable {
+            std::vector<uint8_t>                      blob;
+            std::unordered_map<std::string, uint32_t> offset;
+
+            uint32_t intern(const std::string& s) {
+                auto it = offset.find(s);
+                if (it != offset.end()) return it->second;
+                uint32_t off = (uint32_t)blob.size();
+                offset[s] = off;
+                uint64_t n = (uint64_t)s.size();
+                for (int i = 0; i < 8; ++i) blob.push_back((uint8_t)(n >> (i * 8)));
+                blob.insert(blob.end(), s.begin(), s.end());
+                return off;
+            }
+        };
+
         class FunctionEmitter {
         public:
             FunctionEmitter(std::vector<uint8_t>& text, const Function& fn,
-                const Frame& frame, std::vector<CallFixup>& callFixups)
+                const Frame& frame,
+                std::vector<CallFixup>& callFixups,
+                StringTable& strings,
+                std::vector<StringFixup>& stringFixups)
                 : text_(text), fn_(fn), frame_(frame),
-                callFixups_(callFixups), a_(text) {
+                callFixups_(callFixups), a_(text),
+                strings_(strings), stringFixups_(stringFixups) {
                 for (auto& blk : fn_.blocks)
                     for (auto& op : blk.ops)
                         if (op.kind == OpKind::Phi)
@@ -233,6 +330,8 @@ namespace vcb {
             const Frame& frame_;
             std::vector<CallFixup>& callFixups_;
             Asm                                                     a_;
+            StringTable& strings_;
+            std::vector<StringFixup>& stringFixups_;
             std::unordered_map<std::string, std::vector<const Op*>> phisByBlock_;
             std::unordered_map<std::string, uint32_t>               blockOffsets_;
             std::vector<BlockFixup>                                 blockFixups_;
@@ -279,6 +378,14 @@ namespace vcb {
                     store(op.dst, RAX);
                     break;
                 }
+                case OpKind::ConstStr: {
+                    uint32_t blobOff = strings_.intern(op.strVal);
+                    uint32_t fixPos = (uint32_t)text_.size() + 3;
+                    a_.b(0x48); a_.b(0x8D); a_.b(0x05); a_.b32(0);
+                    stringFixups_.push_back({ fixPos, blobOff });
+                    store(op.dst, RAX);
+                    break;
+                }
                 case OpKind::Copy:
                     load(op.args.at(0), RAX);
                     store(op.dst, RAX);
@@ -312,6 +419,74 @@ namespace vcb {
                     break;
                 }
 
+                                // ---- SSE2 float binary ops -------------------------------
+                case OpKind::FAdd: case OpKind::FSub:
+                case OpKind::FMul: case OpKind::FDiv: {
+                    load(op.args.at(0), RAX);
+                    load(op.args.at(1), RCX);
+                    a_.movqXmmFromGpr(XMM0, RAX);
+                    a_.movqXmmFromGpr(XMM1, RCX);
+                    switch (op.kind) {
+                    case OpKind::FAdd: a_.addsd(XMM0, XMM1); break;
+                    case OpKind::FSub: a_.subsd(XMM0, XMM1); break;
+                    case OpKind::FMul: a_.mulsd(XMM0, XMM1); break;
+                    case OpKind::FDiv: a_.divsd(XMM0, XMM1); break;
+                    default: break;
+                    }
+                    a_.movqGprFromXmm(RAX, XMM0);
+                    store(op.dst, RAX);
+                    break;
+                }
+                case OpKind::FNeg: {
+                    load(op.args.at(0), RAX);
+                    // Flip the sign bit in the GPR.  No SSE2 needed.
+                    a_.movImm64(RCX, 0x8000000000000000ULL);
+                    a_.xorReg(RAX, RCX);
+                    store(op.dst, RAX);
+                    break;
+                }
+                                 // ---- SSE2 float compares --------------------------------
+                case OpKind::FCmpLT: case OpKind::FCmpLE:
+                case OpKind::FCmpGT: case OpKind::FCmpGE:
+                case OpKind::FCmpEQ: case OpKind::FCmpNE: {
+                    load(op.args.at(0), RAX);
+                    load(op.args.at(1), RCX);
+                    a_.movqXmmFromGpr(XMM0, RAX);
+                    a_.movqXmmFromGpr(XMM1, RCX);
+                    a_.comisd(XMM0, XMM1);
+                    uint8_t opc = 0;
+                    switch (op.kind) {
+                        // comisd sets CF=1 if a<b, ZF=1 if a==b.
+                        // NotEq needs an OR of setne and setp so NaN compares
+                        // as not-equal, which matches Vayu semantics.
+                    case OpKind::FCmpEQ: opc = 0x94; break;  // sete
+                    case OpKind::FCmpNE: opc = 0x95; break;  // setne
+                    case OpKind::FCmpLT: opc = 0x92; break;  // setb
+                    case OpKind::FCmpLE: opc = 0x96; break;  // setbe
+                    case OpKind::FCmpGT: opc = 0x97; break;  // seta
+                    case OpKind::FCmpGE: opc = 0x93; break;  // setae
+                    default: break;
+                    }
+                    a_.setcc(opc, RAX);
+                    a_.movzxReg8(RAX, RAX);
+                    store(op.dst, RAX);
+                    break;
+                }
+                case OpKind::Sitof: {
+                    load(op.args.at(0), RAX);
+                    a_.cvtsi2sd(XMM0, RAX);
+                    a_.movqGprFromXmm(RAX, XMM0);
+                    store(op.dst, RAX);
+                    break;
+                }
+                case OpKind::Fptosi: {
+                    load(op.args.at(0), RAX);
+                    a_.movqXmmFromGpr(XMM0, RAX);
+                    a_.cvttsd2si(RAX, XMM0);
+                    store(op.dst, RAX);
+                    break;
+                }
+
                 case OpKind::Eq: case OpKind::Ne:
                 case OpKind::Lt: case OpKind::Le:
                 case OpKind::Gt: case OpKind::Ge: {
@@ -337,8 +512,7 @@ namespace vcb {
                 case OpKind::Alloca: {
                     auto it = frame_.alloca_offset.find(op.dst);
                     if (it == frame_.alloca_offset.end())
-                        throw std::runtime_error(
-                            "codegen: alloca has no frame slot");
+                        throw std::runtime_error("codegen: alloca has no frame slot");
                     a_.leaRbp(RAX, -(int32_t)it->second);
                     store(op.dst, RAX);
                     break;
@@ -361,7 +535,6 @@ namespace vcb {
                     blockFixups_.push_back({ relPos, op.targetTrue });
                     break;
                 }
-
                 case OpKind::Br: {
                     if (op.args.empty())
                         throw std::runtime_error("codegen: br missing condition");
@@ -386,7 +559,6 @@ namespace vcb {
                     blockFixups_.push_back({ jmpTPos, op.targetTrue });
                     break;
                 }
-
                 case OpKind::Phi:
                     break;
 
@@ -402,7 +574,6 @@ namespace vcb {
                     if (!op.dst.empty()) store(op.dst, RAX);
                     break;
                 }
-
                 case OpKind::Ret:
                     if (!op.args.empty()) load(op.args[0], RAX);
                     a_.leave();
@@ -538,6 +709,9 @@ namespace vcb {
 
     CodegenResult codegenX64Pe(const Module& m) {
         CodegenResult r;
+        // 0x2000 was the value present in the last build that ran.  The
+        // bump to 0x10000 coincides with the first Access-is-denied on
+        // this machine; revert.
         r.idataRva = 0x2000;
         const uint32_t textRva = 0x1000;
         const uint32_t textLimit = r.idataRva - textRva;
@@ -556,12 +730,18 @@ namespace vcb {
         uint32_t iatExitProcess = layout.iatByName.at("ExitProcess");
         uint32_t iatGetStdHandle = layout.iatByName.at("GetStdHandle");
         uint32_t iatWriteFile = layout.iatByName.at("WriteFile");
+        (void)iatExitProcess;   // entry stub no longer calls it
+        (void)iatGetStdHandle;
+        (void)iatWriteFile;
 
         auto symbolOffsets = emitRuntime(r.text, textRva,
-            iatGetStdHandle, iatWriteFile,
-            iatExitProcess);
+            layout.iatByName.at("GetStdHandle"),
+            layout.iatByName.at("WriteFile"),
+            layout.iatByName.at("ExitProcess"));
 
-        std::vector<CallFixup> callFixups;
+        std::vector<CallFixup>    callFixups;
+        std::vector<StringFixup>  stringFixups;
+        StringTable               strings;
         std::unordered_map<std::string, Frame> frames;
 
         for (auto& fn : m.functions) {
@@ -574,7 +754,8 @@ namespace vcb {
 
         for (auto& fn : m.functions) {
             symbolOffsets[fn.name] = (uint32_t)r.text.size();
-            FunctionEmitter fe(r.text, fn, frames[fn.name], callFixups);
+            FunctionEmitter fe(r.text, fn, frames[fn.name],
+                callFixups, strings, stringFixups);
             fe.run();
         }
 
@@ -582,25 +763,34 @@ namespace vcb {
             throw std::runtime_error(
                 "codegen: no 'main' function defined; cannot build an executable");
 
+        // Entry stub.  Per the PE spec, the entry point is called like a
+        // normal function; if it returns, the loader terminates the
+        // process with the value left in EAX.  No import lookup needed.
         r.entryOffset = (uint32_t)r.text.size();
         {
             Asm a(r.text);
-            a.subRspImm32(40);
+            a.subRspImm32(40);                              // 48 83 EC 28
             uint32_t callPos = (uint32_t)r.text.size() + 1;
-            a.callRel32Placeholder();
+            a.callRel32Placeholder();                       // E8 rel32
             callFixups.push_back({ callPos, "main" });
-            a.mov32RegReg(RCX, RAX);
-            uint32_t iatRelPos = (uint32_t)r.text.size() + 2;
-            a.callIndirectRip();
-            a.int3();
-            uint32_t instrRva = textRva + (iatRelPos - 2);
-            int32_t  rel = (int32_t)iatExitProcess - (int32_t)(instrRva + 6);
-            std::memcpy(&r.text[iatRelPos], &rel, 4);
+            a.addRspImm32(40);                              // 48 81 C4 28 00 00 00
+            a.ret();                                        // C3
+        }
+
+        // Append string blob at end of .text, patch all ConstStr leas.
+        uint32_t stringStart = (uint32_t)r.text.size();
+        r.text.insert(r.text.end(), strings.blob.begin(), strings.blob.end());
+
+        for (auto& sf : stringFixups) {
+            uint32_t blobAbs = stringStart + sf.blobOff;
+            int32_t  rel = (int32_t)blobAbs - (int32_t)(sf.pos + 4);
+            std::memcpy(&r.text[sf.pos], &rel, 4);
         }
 
         if (r.text.size() > textLimit)
             throw std::runtime_error(
-                "codegen: .text exceeds 0x1000 bytes; layout needs widening");
+                "codegen: .text exceeds 4 KB; bump idataRva or split off "
+                "a separate .rdata section");
 
         for (auto& cf : callFixups) {
             auto it = symbolOffsets.find(cf.target);

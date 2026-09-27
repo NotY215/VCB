@@ -22,9 +22,21 @@ namespace vcb {
         switch (k) {
         case OpKind::ConstI:  return "const.i";
         case OpKind::ConstF:  return "const.f";
+        case OpKind::ConstStr:return "const.str";
         case OpKind::Copy:    return "copy";
         case OpKind::Add:     return "add";
         case OpKind::Sub:     return "sub";
+        case OpKind::FAdd:    return "fadd";
+        case OpKind::FSub:    return "fsub";
+        case OpKind::FMul:    return "fmul";
+        case OpKind::FDiv:    return "fdiv";
+        case OpKind::FNeg:    return "fneg";
+        case OpKind::FCmpLT:  return "fcmp_lt";
+        case OpKind::FCmpLE:  return "fcmp_le";
+        case OpKind::FCmpGT:  return "fcmp_gt";
+        case OpKind::FCmpGE:  return "fcmp_ge";
+        case OpKind::FCmpEQ:  return "fcmp_eq";
+        case OpKind::FCmpNE:  return "fcmp_ne";
         case OpKind::Mul:     return "mul";
         case OpKind::Div:     return "div";
         case OpKind::Mod:     return "mod";
