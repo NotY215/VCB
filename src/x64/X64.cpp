@@ -717,7 +717,8 @@ namespace vcb {
         const uint32_t textLimit = r.idataRva - textRva;
 
         std::vector<ImportSpec> imports = {
-            { "kernel32.dll", { "ExitProcess", "GetStdHandle", "WriteFile" } }
+        { "kernel32.dll", { "ExitProcess", "GetStdHandle", "WriteFile" } },
+        { "msvcrt.dll",   { "malloc", "realloc", "free" } }
         };
         ImportLayout layout = buildImports(r.idataRva, imports);
 
@@ -727,17 +728,15 @@ namespace vcb {
         r.iatRva = layout.iatRva;
         r.iatSize = layout.iatSize;
 
-        uint32_t iatExitProcess = layout.iatByName.at("ExitProcess");
-        uint32_t iatGetStdHandle = layout.iatByName.at("GetStdHandle");
-        uint32_t iatWriteFile = layout.iatByName.at("WriteFile");
-        (void)iatExitProcess;   // entry stub no longer calls it
-        (void)iatGetStdHandle;
-        (void)iatWriteFile;
+        RuntimeImports ri;
+        ri.iatGetStdHandle = layout.iatByName.at("GetStdHandle");
+        ri.iatWriteFile = layout.iatByName.at("WriteFile");
+        ri.iatExitProcess = layout.iatByName.at("ExitProcess");
+        ri.iatMalloc = layout.iatByName.at("malloc");
+        ri.iatRealloc = layout.iatByName.at("realloc");
+        ri.iatFree = layout.iatByName.at("free");
 
-        auto symbolOffsets = emitRuntime(r.text, textRva,
-            layout.iatByName.at("GetStdHandle"),
-            layout.iatByName.at("WriteFile"),
-            layout.iatByName.at("ExitProcess"));
+        auto symbolOffsets = emitRuntime(r.text, textRva, ri);
 
         std::vector<CallFixup>    callFixups;
         std::vector<StringFixup>  stringFixups;
