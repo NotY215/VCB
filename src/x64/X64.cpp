@@ -709,10 +709,18 @@ namespace vcb {
 
     CodegenResult codegenX64Pe(const Module& m) {
         CodegenResult r;
-        // 0x2000 was the value present in the last build that ran.  The
-        // bump to 0x10000 coincides with the first Access-is-denied on
-        // this machine; revert.
-        r.idataRva = 0x2000;
+        // .text lives at [0x1000, 0x4000) and .idata at 0x4000.  The
+        // working layout from earlier drops was idataRva = 0x2000, but
+        // the collection runtime needs more than 4 KB of .text.
+        //
+        // Do NOT raise idataRva past 0x4000.  Windows Defender's static
+        // analysis flags small binaries whose sizeOfImage is more than
+        // roughly 8x their file size: a 3.5 KB exe claiming 69 KB of VA
+        // (idataRva = 0x10000) is treated as a packer stub and blocked
+        // with ERROR_ACCESS_DENIED before the loader ever touches it.
+        // 0x4000 keeps the ratio at ~5.7x, which is normal for a small
+        // console binary.
+        r.idataRva = 0x4000;
         const uint32_t textRva = 0x1000;
         const uint32_t textLimit = r.idataRva - textRva;
 
@@ -788,8 +796,8 @@ namespace vcb {
 
         if (r.text.size() > textLimit)
             throw std::runtime_error(
-                "codegen: .text exceeds 4 KB; bump idataRva or split off "
-                "a separate .rdata section");
+                "codegen: .text exceeds 12 KB; move the string blob into "
+                "a separate .rdata section rather than raising idataRva");
 
         for (auto& cf : callFixups) {
             auto it = symbolOffsets.find(cf.target);

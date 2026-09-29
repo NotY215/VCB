@@ -512,7 +512,7 @@ namespace vcb {
             a.label("loop");
             a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);
             a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xF0);
-            a.b(0x48); a.b(0x39); a.b(0x01);                // cmp i, len
+            a.b(0x48); a.b(0x3B); a.b(0x01);                // cmp i, len
             a.jgeShort("done");
             a.b(0x48); a.b(0x85); a.b(0xC0);
             a.jzShort("no_comma");
@@ -564,7 +564,7 @@ namespace vcb {
             a.label("loop");
             a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);
             a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xD8);
-            a.b(0x48); a.b(0x39); a.b(0x01);
+            a.b(0x48); a.b(0x3B); a.b(0x01);
             a.jgeShort("nf");
             a.b(0x48); a.b(0x8B); a.b(0x49); a.b(0x10);
             a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xD8);
@@ -641,7 +641,7 @@ namespace vcb {
             a.label("loop");
             a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);
             a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xE8);
-            a.b(0x48); a.b(0x39); a.b(0x01);
+            a.b(0x48); a.b(0x3B); a.b(0x01);
             a.jgeShort("miss");
             a.b(0x48); a.b(0x8B); a.b(0x49); a.b(0x10);
             a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xE8);
@@ -678,7 +678,7 @@ namespace vcb {
             a.label("loop");
             a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);
             a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xE8);
-            a.b(0x48); a.b(0x39); a.b(0x01);
+            a.b(0x48); a.b(0x3B); a.b(0x01);
             a.jgeShort("no");
             a.b(0x48); a.b(0x8B); a.b(0x49); a.b(0x10);
             a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xE8);
@@ -721,7 +721,7 @@ namespace vcb {
             a.label("loop");
             a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);
             a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xF0);
-            a.b(0x48); a.b(0x39); a.b(0x01);
+            a.b(0x48); a.b(0x38); a.b(0x01);
             a.jgeShort("done");
             a.b(0x48); a.b(0x85); a.b(0xC0);
             a.jzShort("no_comma");
@@ -836,8 +836,11 @@ namespace vcb {
         rva = mark("vayu_map_len");
         emitMapLen(text, textRva);
 
-        uint32_t printStrRva = syms["vayu_print_str"];
-        uint32_t printCharRva = syms["vayu_print_char"];
+        // `syms[...]` holds offsets within .text (0-based).  `callText`
+        // expects absolute RVAs.  Convert once here so every emitter
+        // below gets the right value.
+        uint32_t printStrRva = textRva + syms["vayu_print_str"];
+        uint32_t printCharRva = textRva + syms["vayu_print_char"];
 
         mark("vayu_print_list");
         emitPrintList(text, textRva, printIntRva, printCharRva);
