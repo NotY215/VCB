@@ -1128,6 +1128,191 @@ namespace vcb {
             a.finalize();
         }
 
+        // vayu_alloc(n) — Linux bump allocator over brk(2).
+        //   Input:  RCX = n (bytes)
+        //   Output: RAX = pointer to n bytes
+        // On brk failure, exits with status 1 via sys_exit (no libc).
+        void emitAllocLinux(std::vector<uint8_t>& t, uint32_t rva) {
+            MiniAsm a(t, rva);
+            a.b(0x55);                                    // push rbp
+            a.b(0x48); a.b(0x89); a.b(0xE5);              // mov rbp, rsp
+            a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x10);   // sub rsp, 16
+            a.b(0x48); a.b(0x83); a.b(0xC1); a.b(0x0F);   // add rcx, 15
+            a.b(0x48); a.b(0x83); a.b(0xE1); a.b(0xF0);   // and rcx, -16
+            a.b(0x48); a.b(0x89); a.b(0x4D); a.b(0xF8);   // mov [rbp-8], rcx
+            a.b(0x31); a.b(0xFF);                          // xor edi, edi
+            a.b(0xB8); a.b32(12);                          // mov eax, 12 (SYS_brk)
+            a.b(0x0F); a.b(0x05);                          // syscall
+            a.b(0x48); a.b(0x89); a.b(0x45); a.b(0xF0);   // mov [rbp-16], rax
+            a.b(0x48); a.b(0x89); a.b(0xC7);              // mov rdi, rax
+            a.b(0x48); a.b(0x03); a.b(0x7D); a.b(0xF8);   // add rdi, [rbp-8]
+            a.b(0xB8); a.b32(12);                          // mov eax, 12
+            a.b(0x0F); a.b(0x05);                          // syscall
+            a.b(0x48); a.b(0x39); a.b(0xF8);              // cmp rax, rdi
+            a.jgeShort("ok");
+            a.b(0xBF); a.b32(1);                           // mov edi, 1
+            a.b(0xB8); a.b32(60);                          // mov eax, 60
+            a.b(0x0F); a.b(0x05);                          // syscall
+            a.b(0xCC);                                     // int3
+            a.label("ok");
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xF0);   // mov rax, [rbp-16]
+            a.b(0xC9); a.b(0xC3);                          // leave; ret
+            a.finalize();
+        }
+
+        // vayu_list_push(list, value) — Linux variant.
+        // Uses vayu_alloc + inline byte copy in place of realloc.
+        //   list  = [0]=len [8]=cap [16]=data
+        //   value = i64
+        void emitListPushLinux(std::vector<uint8_t>& t, uint32_t rva,
+            uint32_t allocRva) {
+            MiniAsm a(t, rva);
+            a.b(0x55);                                      // push rbp
+            a.b(0x48); a.b(0x89); a.b(0xE5);                // mov rbp, rsp
+            a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x60);     // sub rsp, 96
+            a.b(0x48); a.b(0x89); a.b(0x4D); a.b(0xF8);     // [rbp-8]  = list
+            a.b(0x48); a.b(0x89); a.b(0x55); a.b(0xF0);     // [rbp-16] = value
+            a.b(0x48); a.b(0x8B); a.b(0x01);                // mov rax, [rcx]   len
+            a.b(0x48); a.b(0x3B); a.b(0x41); a.b(0x08);     // cmp rax, [rcx+8]
+            a.jlShort("have_cap");
+            // grow
+            a.b(0x48); a.b(0x8B); a.b(0x51); a.b(0x08);     // mov rdx, [rcx+8]
+            a.b(0x48); a.b(0x89); a.b(0x55); a.b(0xE8);     // [rbp-24] = old_cap
+            a.b(0x48); a.b(0x85); a.b(0xD2);                // test rdx, rdx
+            a.jnzShort("dbl");
+            a.b(0x48); a.b(0xC7); a.b(0xC2); a.b32(8);      // mov rdx, 8
+            a.jmpShort("got_cap");
+            a.label("dbl");
+            a.b(0x48); a.b(0x01); a.b(0xD2);                // add rdx, rdx
+            a.label("got_cap");
+            a.b(0x48); a.b(0x89); a.b(0x55); a.b(0xE0);     // [rbp-32] = new_cap
+            a.b(0x48); a.b(0x89); a.b(0xD1);                // mov rcx, rdx
+            a.b(0x48); a.b(0xC1); a.b(0xE1); a.b(0x03);     // shl rcx, 3
+            a.callText(allocRva);
+            a.b(0x48); a.b(0x89); a.b(0x45); a.b(0xD8);     // [rbp-40] = new_data
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);     // rcx = list
+            a.b(0x48); a.b(0x8B); a.b(0x71); a.b(0x10);     // rsi = [rcx+16]
+            a.b(0x48); a.b(0x8B); a.b(0x7D); a.b(0xD8);     // rdi = [rbp-40]
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xE8);     // rcx = old_cap
+            a.b(0x48); a.b(0xC1); a.b(0xE1); a.b(0x03);     // shl rcx, 3
+            a.b(0x4D); a.b(0x31); a.b(0xC0);                // xor r8, r8
+            a.label("cpy");
+            a.b(0x49); a.b(0x39); a.b(0xC8);                // cmp r8, rcx
+            a.jgeShort("cpy_done");
+            a.b(0x42); a.b(0x8A); a.b(0x04); a.b(0x06);     // mov al, [rsi+r8]
+            a.b(0x42); a.b(0x88); a.b(0x04); a.b(0x07);     // mov [rdi+r8], al
+            a.b(0x49); a.b(0xFF); a.b(0xC0);                // inc r8
+            a.jmpShort("cpy");
+            a.label("cpy_done");
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);     // rcx = list
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xD8);     // rax = new_data
+            a.b(0x48); a.b(0x89); a.b(0x41); a.b(0x10);     // [rcx+16] = rax
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xE0);     // rax = new_cap
+            a.b(0x48); a.b(0x89); a.b(0x41); a.b(0x08);     // [rcx+8] = rax
+            a.label("have_cap");
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);     // rcx = list
+            a.b(0x48); a.b(0x8B); a.b(0x01);                // rax = len
+            a.b(0x48); a.b(0x8B); a.b(0x51); a.b(0x10);     // rdx = data
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF0);     // rcx = value
+            a.b(0x48); a.b(0x89); a.b(0x0C); a.b(0xC2);     // [rdx+rax*8] = rcx
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);     // rcx = list
+            a.b(0x48); a.b(0xFF); a.b(0x01);                // inc qword [rcx]
+            a.b(0xC9); a.b(0xC3);                           // leave; ret
+            a.finalize();
+        }
+
+        // vayu_map_put(map, key, value) — Linux variant.
+        //   map   = [0]=len [8]=cap [16]=entries (16-byte {key, value})
+        //   key   = VayuStr* (as on PE)
+        //   value = i64
+        void emitMapPutLinux(std::vector<uint8_t>& t, uint32_t rva,
+            uint32_t strEqRva, uint32_t allocRva) {
+            MiniAsm a(t, rva);
+            a.b(0x55);                                        // push rbp
+            a.b(0x48); a.b(0x89); a.b(0xE5);                  // mov rbp, rsp
+            a.b(0x48); a.b(0x81); a.b(0xEC); a.b32(128);      // sub rsp, 128
+            a.b(0x48); a.b(0x89); a.b(0x4D); a.b(0xF8);       // [rbp-8]  = map
+            a.b(0x48); a.b(0x89); a.b(0x55); a.b(0xF0);       // [rbp-16] = key
+            a.b(0x4C); a.b(0x89); a.b(0x45); a.b(0xE8);       // [rbp-24] = value
+            a.b(0x48); a.b(0xC7); a.b(0x45); a.b(0xE0); a.b32(0);
+            a.label("loop");
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);       // rcx = map
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xE0);       // rax = i
+            a.b(0x48); a.b(0x3B); a.b(0x01);                  // cmp rax, [rcx]
+            a.jgeShort("nf");
+            a.b(0x48); a.b(0x8B); a.b(0x49); a.b(0x10);       // rcx = entries
+            a.b(0x48); a.b(0xC1); a.b(0xE0); a.b(0x04);       // shl rax, 4
+            a.b(0x48); a.b(0x01); a.b(0xC1);                  // rcx += rax
+            a.b(0x48); a.b(0x8B); a.b(0x11);                  // rdx = entry.key
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF0);       // rcx = arg key
+            a.callText(strEqRva);
+            a.b(0x48); a.b(0x85); a.b(0xC0);                  // test rax, rax
+            a.jnzShort("found");
+            a.b(0x48); a.b(0xFF); a.b(0x45); a.b(0xE0);       // inc i
+            a.jmpShort("loop");
+            a.label("found");
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);       // rcx = map
+            a.b(0x48); a.b(0x8B); a.b(0x49); a.b(0x10);       // rcx = entries
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xE0);       // rax = i
+            a.b(0x48); a.b(0xC1); a.b(0xE0); a.b(0x04);       // shl rax, 4
+            a.b(0x48); a.b(0x01); a.b(0xC1);                  // rcx = &entry
+            a.b(0x48); a.b(0x8B); a.b(0x55); a.b(0xE8);       // rdx = value
+            a.b(0x48); a.b(0x89); a.b(0x51); a.b(0x08);       // [rcx+8] = value
+            a.b(0xC9); a.b(0xC3);                             // leave; ret
+            a.label("nf");
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);       // rcx = map
+            a.b(0x48); a.b(0x8B); a.b(0x01);                  // rax = len
+            a.b(0x48); a.b(0x3B); a.b(0x41); a.b(0x08);       // cmp len, cap
+            a.jlShort("hr");
+            a.b(0x48); a.b(0x8B); a.b(0x51); a.b(0x08);       // rdx = old_cap
+            a.b(0x48); a.b(0x89); a.b(0x55); a.b(0xD8);       // [rbp-40] = old_cap
+            a.b(0x48); a.b(0x85); a.b(0xD2);
+            a.jnzShort("dbl");
+            a.b(0x48); a.b(0xC7); a.b(0xC2); a.b32(8);
+            a.jmpShort("got");
+            a.label("dbl");
+            a.b(0x48); a.b(0x01); a.b(0xD2);                  // add rdx, rdx
+            a.label("got");
+            a.b(0x48); a.b(0x89); a.b(0x55); a.b(0xD0);       // [rbp-48] = new_cap
+            a.b(0x48); a.b(0x89); a.b(0xD1);                  // rcx = new_cap
+            a.b(0x48); a.b(0xC1); a.b(0xE1); a.b(0x04);       // shl rcx, 4
+            a.callText(allocRva);
+            a.b(0x48); a.b(0x89); a.b(0x45); a.b(0xC8);       // [rbp-56] = new_data
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);       // rcx = map
+            a.b(0x48); a.b(0x8B); a.b(0x71); a.b(0x10);       // rsi = entries
+            a.b(0x48); a.b(0x8B); a.b(0x7D); a.b(0xC8);       // rdi = new_data
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xD8);       // rcx = old_cap
+            a.b(0x48); a.b(0xC1); a.b(0xE1); a.b(0x04);       // shl rcx, 4
+            a.b(0x4D); a.b(0x31); a.b(0xC0);                  // xor r8, r8
+            a.label("cpy");
+            a.b(0x49); a.b(0x39); a.b(0xC8);                  // cmp r8, rcx
+            a.jgeShort("cpy_done");
+            a.b(0x42); a.b(0x8A); a.b(0x04); a.b(0x06);       // mov al, [rsi+r8]
+            a.b(0x42); a.b(0x88); a.b(0x04); a.b(0x07);       // mov [rdi+r8], al
+            a.b(0x49); a.b(0xFF); a.b(0xC0);                  // inc r8
+            a.jmpShort("cpy");
+            a.label("cpy_done");
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);       // rcx = map
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xC8);       // rax = new_data
+            a.b(0x48); a.b(0x89); a.b(0x41); a.b(0x10);       // [rcx+16] = rax
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xD0);       // rax = new_cap
+            a.b(0x48); a.b(0x89); a.b(0x41); a.b(0x08);       // [rcx+8]  = rax
+            a.label("hr");
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);       // rcx = map
+            a.b(0x48); a.b(0x8B); a.b(0x49); a.b(0x10);       // rcx = entries
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xE0);       // rax = i (== len)
+            a.b(0x48); a.b(0xC1); a.b(0xE0); a.b(0x04);       // shl rax, 4
+            a.b(0x48); a.b(0x01); a.b(0xC1);                  // rcx = &entry
+            a.b(0x48); a.b(0x8B); a.b(0x55); a.b(0xF0);       // rdx = key
+            a.b(0x48); a.b(0x89); a.b(0x11);                  // [rcx]   = key
+            a.b(0x48); a.b(0x8B); a.b(0x55); a.b(0xE8);       // rdx = value
+            a.b(0x48); a.b(0x89); a.b(0x51); a.b(0x08);       // [rcx+8] = value
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);       // rcx = map
+            a.b(0x48); a.b(0xFF); a.b(0x01);                  // inc qword [rcx]
+            a.b(0xC9); a.b(0xC3);                             // leave; ret
+            a.finalize();
+        }
+
     } // namespace
 
     // =========================================================================
@@ -1281,9 +1466,22 @@ namespace vcb {
     }
 
     // =========================================================================
-    // emitRuntimeLinux — Part 1 subset.  No alloc, no collections, no
-    // floats.  Every emitter is self-contained (no cross-runtime calls),
-    // so no dependency closure is needed.
+    // emitRuntimeLinux — Part 2: heap + collections + string methods.
+    // vayu_print_float is still not implemented on Linux; a module that
+    // calls it will fail the call-fixup stage with an "undefined
+    // function" error rather than producing silently wrong output.
+    //
+    // Emission order is a topological sort of the runtime's call graph:
+    //   exit / print_*
+    //   alloc
+    //   str_len / str_eq / str_starts_with / str_ends_with /
+    //       str_contains / str_find
+    //   str_upper / str_lower
+    //   list_*
+    //   map_*
+    //   print_list / print_map
+    // Every function that does callText(...) to another runtime symbol is
+    // emitted after that symbol, so `mark()` always sees a live RVA.
     // =========================================================================
 
     std::unordered_map<std::string, uint32_t> emitRuntimeLinux(
@@ -1296,19 +1494,136 @@ namespace vcb {
                     if (op.kind == OpKind::Call && !op.callee.empty())
                         need.insert(op.callee);
 
-        auto has = [&](const char* n) { return need.count(n) > 0; };
-        std::unordered_map<std::string, uint32_t> syms;
-        auto mark = [&](const char* name) {
-            syms[name] = (uint32_t)text.size();
+        auto depends = [](const std::string& s) -> std::vector<std::string> {
+            if (s == "vayu_list_new")   return { "vayu_alloc" };
+            if (s == "vayu_list_push")  return { "vayu_alloc" };
+            if (s == "vayu_map_new")    return { "vayu_alloc" };
+            if (s == "vayu_map_put")    return { "vayu_alloc", "vayu_str_eq" };
+            if (s == "vayu_map_get")    return { "vayu_str_eq" };
+            if (s == "vayu_map_has")    return { "vayu_str_eq" };
+            if (s == "vayu_print_list") return { "vayu_print_int",
+                                             "vayu_print_char" };
+            if (s == "vayu_print_map")  return { "vayu_print_int",
+                                             "vayu_print_str",
+                                             "vayu_print_char" };
+            if (s == "vayu_str_upper")  return { "vayu_alloc" };
+            if (s == "vayu_str_lower")  return { "vayu_alloc" };
+            (void)s;
+            return {};
             };
 
-        if (has("vayu_exit")) { mark("vayu_exit");         emitExitLinux(text, textRva); }
-        if (has("vayu_print_char")) { mark("vayu_print_char");   emitPrintCharLinux(text, textRva); }
-        if (has("vayu_print_ln")) { mark("vayu_print_ln");     emitPrintLnLinux(text, textRva); }
-        if (has("vayu_print_space")) { mark("vayu_print_space");  emitPrintSpaceLinux(text, textRva); }
-        if (has("vayu_print_bool")) { mark("vayu_print_bool");   emitPrintBoolLinux(text, textRva); }
-        if (has("vayu_print_str")) { mark("vayu_print_str");    emitPrintStrLinux(text, textRva); }
-        if (has("vayu_print_int")) { mark("vayu_print_int");    emitPrintIntLinux(text, textRva); }
+        std::vector<std::string> stack(need.begin(), need.end());
+        while (!stack.empty()) {
+            std::string s = stack.back(); stack.pop_back();
+            for (auto& d : depends(s))
+                if (need.insert(d).second) stack.push_back(d);
+        }
+
+        auto has = [&](const char* n) { return need.count(n) > 0; };
+
+        std::unordered_map<std::string, uint32_t> syms;
+        auto mark = [&](const char* name) -> uint32_t {
+            uint32_t off = (uint32_t)text.size();
+            syms[name] = off;
+            return textRva + off;
+            };
+
+        uint32_t printCharRva = 0, printStrRva = 0, printIntRva = 0;
+        uint32_t allocRva = 0, strEqRva = 0;
+
+        if (has("vayu_exit")) {
+            mark("vayu_exit"); emitExitLinux(text, textRva);
+        }
+        if (has("vayu_print_char")) {
+            printCharRva = mark("vayu_print_char"); emitPrintCharLinux(text, textRva);
+        }
+        if (has("vayu_print_ln")) {
+            mark("vayu_print_ln"); emitPrintLnLinux(text, textRva);
+        }
+        if (has("vayu_print_space")) {
+            mark("vayu_print_space"); emitPrintSpaceLinux(text, textRva);
+        }
+        if (has("vayu_print_bool")) {
+            mark("vayu_print_bool"); emitPrintBoolLinux(text, textRva);
+        }
+        if (has("vayu_print_str")) {
+            printStrRva = mark("vayu_print_str"); emitPrintStrLinux(text, textRva);
+        }
+        if (has("vayu_print_int")) {
+            printIntRva = mark("vayu_print_int"); emitPrintIntLinux(text, textRva);
+        }
+
+        if (has("vayu_alloc")) {
+            allocRva = mark("vayu_alloc"); emitAllocLinux(text, textRva);
+        }
+
+        if (has("vayu_str_len")) {
+            mark("vayu_str_len"); emitStrLen(text, textRva);
+        }
+        if (has("vayu_str_eq")) {
+            strEqRva = mark("vayu_str_eq"); emitStrEq(text, textRva);
+        }
+        if (has("vayu_str_starts_with")) {
+            mark("vayu_str_starts_with"); emitStrStartsWith(text, textRva);
+        }
+        if (has("vayu_str_ends_with")) {
+            mark("vayu_str_ends_with"); emitStrEndsWith(text, textRva);
+        }
+        if (has("vayu_str_contains")) {
+            mark("vayu_str_contains"); emitStrContains(text, textRva);
+        }
+        if (has("vayu_str_find")) {
+            mark("vayu_str_find"); emitStrFind(text, textRva);
+        }
+        if (has("vayu_str_upper")) {
+            mark("vayu_str_upper"); emitStrUpper(text, textRva, allocRva);
+        }
+        if (has("vayu_str_lower")) {
+            mark("vayu_str_lower"); emitStrLower(text, textRva, allocRva);
+        }
+
+        if (has("vayu_list_new")) {
+            mark("vayu_list_new"); emitListNew(text, textRva, allocRva);
+        }
+        if (has("vayu_list_push")) {
+            mark("vayu_list_push"); emitListPushLinux(text, textRva, allocRva);
+        }
+        if (has("vayu_list_get")) {
+            mark("vayu_list_get"); emitListGet(text, textRva);
+        }
+        if (has("vayu_list_set")) {
+            mark("vayu_list_set"); emitListSet(text, textRva);
+        }
+        if (has("vayu_list_len")) {
+            mark("vayu_list_len"); emitListLen(text, textRva);
+        }
+
+        if (has("vayu_map_new")) {
+            mark("vayu_map_new"); emitMapNew(text, textRva, allocRva);
+        }
+        if (has("vayu_map_put")) {
+            mark("vayu_map_put");
+            emitMapPutLinux(text, textRva, strEqRva, allocRva);
+        }
+        if (has("vayu_map_get")) {
+            mark("vayu_map_get"); emitMapGet(text, textRva, strEqRva);
+        }
+        if (has("vayu_map_has")) {
+            mark("vayu_map_has"); emitMapHas(text, textRva, strEqRva);
+        }
+        if (has("vayu_map_len")) {
+            mark("vayu_map_len"); emitMapLen(text, textRva);
+        }
+
+        if (has("vayu_print_list")) {
+            mark("vayu_print_list");
+            emitPrintList(text, textRva, printIntRva, printCharRva);
+        }
+        if (has("vayu_print_map")) {
+            mark("vayu_print_map");
+            emitPrintMap(text, textRva, printIntRva, printStrRva, printCharRva);
+        }
+
         return syms;
     }
 

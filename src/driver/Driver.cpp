@@ -28,7 +28,7 @@ namespace vcb {
         }
 
         int cmdVersion() {
-            std::printf("vcb 0.3.4 (Phase 27 Part 1, ELF writer)\n");
+            std::printf("vcb 0.3.5 (Phase 27 Part 3, PE padding)\n");
             return 0;
         }
 
