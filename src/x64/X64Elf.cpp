@@ -1,6 +1,5 @@
 #include "vcb/X64.hpp"
 #include "vcb/Runtime.hpp"
-#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -15,7 +14,6 @@ namespace vcb {
             RAX = 0, RCX = 1, RDX = 2, RBX = 3,
             RSP = 4, RBP = 5, RSI = 6, RDI = 7,
             R8 = 8, R9 = 9, R10 = 10, R11 = 11,
-            R12 = 12, R13 = 13, R14 = 14, R15 = 15
         };
 
         struct Asm {
@@ -28,9 +26,9 @@ namespace vcb {
 
             void rex(bool w, uint8_t reg, uint8_t rm) {
                 uint8_t r = 0x40;
-                if (w)          r |= 0x08;
-                if (reg >= 8)   r |= 0x04;
-                if (rm >= 8)   r |= 0x01;
+                if (w) r |= 0x08;
+                if (reg >= 8) r |= 0x04;
+                if (rm >= 8) r |= 0x01;
                 if (r != 0x40) b(r);
             }
 
@@ -57,7 +55,6 @@ namespace vcb {
                 b(0x80 | ((reg & 7) << 3) | 5);
                 b32((uint32_t)disp);
             }
-
             void addReg(uint8_t dst, uint8_t src) {
                 rex(true, src, dst); b(0x01);
                 b(0xC0 | ((src & 7) << 3) | (dst & 7));
@@ -134,22 +131,21 @@ namespace vcb {
                 b(0xC0 | ((reg & 7) << 3) | (reg & 7));
             }
 
-            // SSE2
             void movqXmmFromGpr(uint8_t xmm, uint8_t gpr) {
                 b(0x66);
-                uint8_t rexByte = 0x48;
-                if (xmm >= 8) rexByte |= 0x04;
-                if (gpr >= 8) rexByte |= 0x01;
-                b(rexByte);
+                uint8_t r = 0x48;
+                if (xmm >= 8) r |= 0x04;
+                if (gpr >= 8) r |= 0x01;
+                b(r);
                 b(0x0F); b(0x6E);
                 b(0xC0 | ((xmm & 7) << 3) | (gpr & 7));
             }
             void movqGprFromXmm(uint8_t gpr, uint8_t xmm) {
                 b(0x66);
-                uint8_t rexByte = 0x48;
-                if (xmm >= 8) rexByte |= 0x04;
-                if (gpr >= 8) rexByte |= 0x01;
-                b(rexByte);
+                uint8_t r = 0x48;
+                if (xmm >= 8) r |= 0x04;
+                if (gpr >= 8) r |= 0x01;
+                b(r);
                 b(0x0F); b(0x7E);
                 b(0xC0 | ((xmm & 7) << 3) | (gpr & 7));
             }
@@ -193,17 +189,20 @@ namespace vcb {
                 b(0xC0 | ((gpr & 7) << 3) | (xmm & 7));
             }
 
-            // Control flow
             void jmpRel32Placeholder() { b(0xE9); b32(0); }
             void jnzRel32Placeholder() { b(0x0F); b(0x85); b32(0); }
             void callRel32Placeholder() { b(0xE8); b32(0); }
-            void callIndirectRip() { b(0xFF); b(0x15); b32(0); }
             void ret() { b(0xC3); }
             void leave() { b(0xC9); }
             void pushRbp() { b(0x55); }
             void int3() { b(0xCC); }
             void subRspImm32(uint32_t imm) { b(0x48); b(0x81); b(0xEC); b32(imm); }
-            void addRspImm32(uint32_t imm) { b(0x48); b(0x81); b(0xC4); b32(imm); }
+            void movImm32(uint8_t reg, uint32_t imm) {
+                if (reg >= 8) b(0x41);
+                b(0xB8 + (reg & 7));
+                b32(imm);
+            }
+            void syscall() { b(0x0F); b(0x05); }
         };
 
         struct Frame {
@@ -221,17 +220,13 @@ namespace vcb {
                 for (auto& op : blk.ops)
                     if (!op.dst.empty()) f.slot[op.dst] = i++;
             f.nSlots = i;
-
             int na = 0;
-            for (auto& blk : fn.blocks) {
-                for (auto& op : blk.ops) {
+            for (auto& blk : fn.blocks)
+                for (auto& op : blk.ops)
                     if (op.kind == OpKind::Alloca && !op.dst.empty()) {
                         f.alloca_offset[op.dst] = f.nSlots * 8 + na * 8 + 8;
                         ++na;
                     }
-                }
-            }
-
             int bytes = f.nSlots * 8 + na * 8 + 32;
             f.frameSize = (bytes + 15) & ~15;
             return f;
@@ -241,15 +236,13 @@ namespace vcb {
             uint32_t    pos;
             std::string target;
         };
-
         struct BlockFixup {
             uint32_t    pos;
             std::string target;
         };
-
         struct StringFixup {
-            uint32_t pos;      // where the disp32 goes in .text
-            uint32_t blobOff;  // offset within .rdata
+            uint32_t pos;
+            uint32_t blobOff;
         };
 
         struct StringTable {
@@ -291,7 +284,7 @@ namespace vcb {
 
                 static const uint8_t argRegs[4] = { RCX, RDX, R8, R9 };
                 if (fn_.params.size() > 4)
-                    throw std::runtime_error("codegen: >4 params not yet supported");
+                    throw std::runtime_error("codegen: >4 params not supported");
                 for (size_t i = 0; i < fn_.params.size(); ++i) {
                     int slot = frame_.slot.at(fn_.params[i].name);
                     a_.storeRbp(-(slot + 1) * 8, argRegs[i]);
@@ -355,7 +348,6 @@ namespace vcb {
 
             void emitOp(const Op& op) {
                 switch (op.kind) {
-
                 case OpKind::ConstI:
                     a_.movImm64(RAX, (uint64_t)op.immI);
                     store(op.dst, RAX);
@@ -384,7 +376,6 @@ namespace vcb {
                     a_.negReg(RAX);
                     store(op.dst, RAX);
                     break;
-
                 case OpKind::Add: case OpKind::Sub: case OpKind::Mul:
                 case OpKind::And: case OpKind::Or:  case OpKind::Xor:
                 case OpKind::Div: case OpKind::Mod:
@@ -407,7 +398,6 @@ namespace vcb {
                     store(op.dst, RAX);
                     break;
                 }
-
                 case OpKind::FAdd: case OpKind::FSub:
                 case OpKind::FMul: case OpKind::FDiv: {
                     load(op.args.at(0), RAX);
@@ -440,7 +430,7 @@ namespace vcb {
                     a_.movqXmmFromGpr(0, RAX);
                     a_.movqXmmFromGpr(1, RCX);
                     a_.comisd(0, 1);
-                    uint8_t opc = 0;
+                    uint8_t opc = 0x94;
                     switch (op.kind) {
                     case OpKind::FCmpEQ: opc = 0x94; break;
                     case OpKind::FCmpNE: opc = 0x95; break;
@@ -469,7 +459,6 @@ namespace vcb {
                     store(op.dst, RAX);
                     break;
                 }
-
                 case OpKind::Eq: case OpKind::Ne:
                 case OpKind::Lt: case OpKind::Le:
                 case OpKind::Gt: case OpKind::Ge: {
@@ -491,11 +480,10 @@ namespace vcb {
                     store(op.dst, RAX);
                     break;
                 }
-
                 case OpKind::Alloca: {
                     auto it = frame_.alloca_offset.find(op.dst);
                     if (it == frame_.alloca_offset.end())
-                        throw std::runtime_error("codegen: alloca has no frame slot");
+                        throw std::runtime_error("codegen: alloca has no slot");
                     a_.leaRbp(RAX, -(int32_t)it->second);
                     store(op.dst, RAX);
                     break;
@@ -510,7 +498,6 @@ namespace vcb {
                     load(op.args.at(1), RCX);
                     a_.movIndRegReg(RCX, RAX);
                     break;
-
                 case OpKind::Jmp: {
                     emitPhiStores(op.targetTrue, currentBlock_);
                     uint32_t relPos = (uint32_t)text_.size() + 1;
@@ -520,22 +507,18 @@ namespace vcb {
                 }
                 case OpKind::Br: {
                     if (op.args.empty())
-                        throw std::runtime_error("codegen: br missing condition");
+                        throw std::runtime_error("codegen: br missing cond");
                     load(op.args.at(0), RAX);
                     a_.testReg(RAX);
-
                     uint32_t jnzRelPos = (uint32_t)text_.size() + 2;
                     a_.jnzRel32Placeholder();
-
                     emitPhiStores(op.targetFalse, currentBlock_);
                     uint32_t jmpFPos = (uint32_t)text_.size() + 1;
                     a_.jmpRel32Placeholder();
                     blockFixups_.push_back({ jmpFPos, op.targetFalse });
-
                     uint32_t here = (uint32_t)text_.size();
                     int32_t rel = (int32_t)here - (int32_t)(jnzRelPos + 4);
                     std::memcpy(&text_[jnzRelPos], &rel, 4);
-
                     emitPhiStores(op.targetTrue, currentBlock_);
                     uint32_t jmpTPos = (uint32_t)text_.size() + 1;
                     a_.jmpRel32Placeholder();
@@ -544,17 +527,15 @@ namespace vcb {
                 }
                 case OpKind::Phi:
                     break;
-
                 case OpKind::Call: {
                     static const uint8_t argRegs[4] = { RCX, RDX, R8, R9 };
                     if (op.args.size() > 4)
-                        throw std::runtime_error("codegen: >4 args not yet supported");
+                        throw std::runtime_error("codegen: >4 args not supported");
                     for (size_t i = 0; i < op.args.size(); ++i)
                         load(op.args[i], argRegs[i]);
                     uint32_t relPos = (uint32_t)text_.size() + 1;
                     a_.callRel32Placeholder();
                     callFixups_.push_back({ relPos, op.callee });
-                    if (!op.dst.empty()) store(op.dst, RDX == 1 ? RAX : RAX);
                     if (!op.dst.empty()) store(op.dst, RAX);
                     break;
                 }
@@ -563,154 +544,22 @@ namespace vcb {
                     a_.leave();
                     a_.ret();
                     break;
-
                 default:
                     throw std::runtime_error(
-                        std::string("codegen: op not yet implemented: ") +
+                        std::string("codegen: op not implemented: ") +
                         opName(op.kind));
                 }
             }
         };
 
-        struct ImportSpec {
-            std::string              dll;
-            std::vector<std::string> funcs;
-        };
-
-        struct ImportLayout {
-            std::vector<uint8_t>                      idata;
-            uint32_t                                  importRva = 0;
-            uint32_t                                  importSize = 0;
-            uint32_t                                  iatRva = 0;
-            uint32_t                                  iatSize = 0;
-            std::unordered_map<std::string, uint32_t> iatByName;
-        };
-
-        ImportLayout buildImports(uint32_t idataRva,
-            const std::vector<ImportSpec>& imports) {
-            const uint32_t DESC_SIZE = 40;
-            uint32_t descTotal = DESC_SIZE * (uint32_t)(imports.size() + 1);
-
-            uint32_t iltTotal = 0, iatTotal = 0;
-            for (auto& im : imports) {
-                uint32_t n = (uint32_t)im.funcs.size() + 1;
-                iltTotal += n * 8;
-                iatTotal += n * 8;
-            }
-
-            std::vector<uint32_t> hintOffsets;
-            uint32_t hintTotal = 0;
-            for (auto& im : imports) {
-                for (auto& f : im.funcs) {
-                    hintOffsets.push_back(hintTotal);
-                    uint32_t len = 2 + (uint32_t)f.size() + 1;
-                    if (len & 1) ++len;
-                    hintTotal += len;
-                }
-            }
-
-            std::vector<uint32_t> dllNameOffsets;
-            uint32_t dllNamesTotal = 0;
-            for (auto& im : imports) {
-                dllNameOffsets.push_back(dllNamesTotal);
-                uint32_t len = (uint32_t)im.dll.size() + 1;
-                if (len & 1) ++len;
-                dllNamesTotal += len;
-            }
-
-            uint32_t offDesc = 0;
-            uint32_t offIlt = offDesc + descTotal;
-            uint32_t offIat = offIlt + iltTotal;
-            uint32_t offHint = offIat + iatTotal;
-            uint32_t offDll = offHint + hintTotal;
-            uint32_t total = offDll + dllNamesTotal;
-
-            ImportLayout L;
-            L.idata.assign(total, 0);
-            L.importRva = idataRva + offDesc;
-            L.importSize = descTotal;
-            L.iatRva = idataRva + offIat;
-            L.iatSize = iatTotal;
-
-            auto putU32 = [&](uint32_t at, uint32_t v) {
-                L.idata[at + 0] = (uint8_t)(v);
-                L.idata[at + 1] = (uint8_t)(v >> 8);
-                L.idata[at + 2] = (uint8_t)(v >> 16);
-                L.idata[at + 3] = (uint8_t)(v >> 24);
-                };
-            auto putU64 = [&](uint32_t at, uint64_t v) {
-                for (int i = 0; i < 8; ++i) L.idata[at + i] = (uint8_t)(v >> (8 * i));
-                };
-
-            uint32_t iltCur = offIlt, iatCur = offIat, hintCur = 0;
-
-            for (size_t di = 0; di < imports.size(); ++di) {
-                uint32_t descAt = offDesc + (uint32_t)di * DESC_SIZE;
-                uint32_t thisIlt = iltCur;
-                uint32_t thisIat = iatCur;
-                uint32_t thisDll = idataRva + offDll + dllNameOffsets[di];
-
-                putU32(descAt + 0, idataRva + thisIlt);
-                putU32(descAt + 4, 0);
-                putU32(descAt + 8, 0);
-                putU32(descAt + 12, thisDll);
-                putU32(descAt + 16, idataRva + thisIat);
-
-                for (size_t fi = 0; fi < imports[di].funcs.size(); ++fi) {
-                    uint32_t hnRva = idataRva + offHint + hintOffsets[hintCur];
-                    putU64(thisIlt + (uint32_t)fi * 8, (uint64_t)hnRva);
-                    putU64(thisIat + (uint32_t)fi * 8, (uint64_t)hnRva);
-                    L.iatByName[imports[di].funcs[fi]] =
-                        idataRva + thisIat + (uint32_t)fi * 8;
-                    uint32_t hnAt = offHint + hintOffsets[hintCur];
-                    L.idata[hnAt + 0] = 0;
-                    L.idata[hnAt + 1] = 0;
-                    std::memcpy(&L.idata[hnAt + 2],
-                        imports[di].funcs[fi].c_str(),
-                        imports[di].funcs[fi].size() + 1);
-                    ++hintCur;
-                }
-                iltCur += ((uint32_t)imports[di].funcs.size() + 1) * 8;
-                iatCur += ((uint32_t)imports[di].funcs.size() + 1) * 8;
-            }
-            for (size_t di = 0; di < imports.size(); ++di) {
-                std::memcpy(&L.idata[offDll + dllNameOffsets[di]],
-                    imports[di].dll.c_str(),
-                    imports[di].dll.size() + 1);
-            }
-            return L;
-        }
-
     } // namespace
 
-    CodegenResult codegenX64Pe(const Module& m) {
+    CodegenResult codegenX64Elf(const Module& m) {
         CodegenResult r;
-        // .text at 0x1000, .rdata at 0x2000, .idata at 0x3000.
-        // SizeOfImage for a 4 KB program is 0x4000 = 16 KB, ratio 4.x.
         const uint32_t textRva = r.textRva;
         const uint32_t textLimit = r.rdataRva - textRva;
 
-        std::vector<ImportSpec> imports = {
-            { "kernel32.dll", { "ExitProcess", "GetStdHandle", "WriteFile" } },
-            { "msvcrt.dll",   { "malloc", "realloc", "free" } }
-        };
-        ImportLayout layout = buildImports(r.idataRva, imports);
-
-        r.idata = std::move(layout.idata);
-        r.importRva = layout.importRva;
-        r.importSize = layout.importSize;
-        r.iatRva = layout.iatRva;
-        r.iatSize = layout.iatSize;
-
-        RuntimeImports ri;
-        ri.iatGetStdHandle = layout.iatByName.at("GetStdHandle");
-        ri.iatWriteFile = layout.iatByName.at("WriteFile");
-        ri.iatExitProcess = layout.iatByName.at("ExitProcess");
-        ri.iatMalloc = layout.iatByName.at("malloc");
-        ri.iatRealloc = layout.iatByName.at("realloc");
-        ri.iatFree = layout.iatByName.at("free");
-
-        auto symbolOffsets = emitRuntime(r.text, textRva, ri, m);
+        auto symbolOffsets = emitRuntimeLinux(r.text, textRva, m);
 
         std::vector<CallFixup>    callFixups;
         std::vector<StringFixup>  stringFixups;
@@ -736,12 +585,13 @@ namespace vcb {
             throw std::runtime_error(
                 "codegen: no 'main' function defined; cannot build an executable");
 
-        // ---- Entry stub -----------------------------------------------
-        // sub rsp, 40
-        // call main
-        // mov ecx, eax
-        // call [ExitProcess]
-        // int3
+        // Linux entry stub:
+        //   sub rsp, 40
+        //   call main
+        //   mov edi, eax
+        //   mov eax, 60      ; SYS_exit
+        //   syscall
+        //   int3
         r.entryOffset = (uint32_t)r.text.size();
         {
             Asm a(r.text);
@@ -749,17 +599,12 @@ namespace vcb {
             uint32_t callPos = (uint32_t)r.text.size() + 1;
             a.callRel32Placeholder();
             callFixups.push_back({ callPos, "main" });
-            a.mov32RegReg(RCX, RAX);
-            uint32_t iatRelPos = (uint32_t)r.text.size() + 2;
-            a.callIndirectRip();
+            a.mov32RegReg(RDI, RAX);      // mov edi, eax
+            a.movImm32(RAX, 60);          // mov eax, 60
+            a.syscall();
             a.int3();
-            uint32_t instrRva = textRva + (iatRelPos - 2);
-            int32_t  rel = (int32_t)ri.iatExitProcess -
-                (int32_t)(instrRva + 6);
-            std::memcpy(&r.text[iatRelPos], &rel, 4);
         }
 
-        // ---- String blob goes to .rdata -------------------------------
         r.rdata = strings.blob;
 
         for (auto& sf : stringFixups) {
@@ -770,7 +615,7 @@ namespace vcb {
 
         if (r.text.size() > textLimit)
             throw std::runtime_error(
-                "codegen: .text exceeds 4 KB; move more code into .rdata "
+                "codegen: .text exceeds 4 KB; move more code into .rodata "
                 "or add runtime pruning");
 
         for (auto& cf : callFixups) {
