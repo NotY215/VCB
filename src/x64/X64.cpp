@@ -1,5 +1,6 @@
 #include "vcb/X64.hpp"
 #include "vcb/Runtime.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -691,8 +692,8 @@ namespace vcb {
         const uint32_t textLimit = r.rdataRva - textRva;
 
         std::vector<ImportSpec> imports = {
-            { "kernel32.dll", { "ExitProcess", "GetStdHandle", "WriteFile" } },
-            { "msvcrt.dll",   { "malloc", "realloc", "free" } }
+            { "kernel32.dll", { "ExitProcess", "GetStdHandle", "WriteFile",
+                                "GetProcessHeap", "HeapAlloc", "HeapReAlloc" } }
         };
         ImportLayout layout = buildImports(r.idataRva, imports);
 
@@ -706,9 +707,9 @@ namespace vcb {
         ri.iatGetStdHandle = layout.iatByName.at("GetStdHandle");
         ri.iatWriteFile = layout.iatByName.at("WriteFile");
         ri.iatExitProcess = layout.iatByName.at("ExitProcess");
-        ri.iatMalloc = layout.iatByName.at("malloc");
-        ri.iatRealloc = layout.iatByName.at("realloc");
-        ri.iatFree = layout.iatByName.at("free");
+        ri.iatGetProcessHeap = layout.iatByName.at("GetProcessHeap");
+        ri.iatHeapAlloc = layout.iatByName.at("HeapAlloc");
+        ri.iatHeapReAlloc = layout.iatByName.at("HeapReAlloc");
 
         auto symbolOffsets = emitRuntime(r.text, textRva, ri, m);
 
@@ -725,11 +726,28 @@ namespace vcb {
             frames[fn.name] = layoutFunction(fn);
         }
 
+        // Emit user functions and record (startRva, endRva, frameSize)
+        // for each so we can build .pdata / .xdata afterwards.
+        struct EmittedFunc {
+            uint32_t startRva = 0;
+            uint32_t endRva = 0;
+            uint32_t frameSize = 0;
+        };
+        std::vector<EmittedFunc> userFuncs;
+        userFuncs.reserve(m.functions.size());
+
         for (auto& fn : m.functions) {
-            symbolOffsets[fn.name] = (uint32_t)r.text.size();
+            uint32_t startOff = (uint32_t)r.text.size();
+            symbolOffsets[fn.name] = startOff;
             FunctionEmitter fe(r.text, fn, frames[fn.name],
                 callFixups, strings, stringFixups);
             fe.run();
+            uint32_t endOff = (uint32_t)r.text.size();
+            userFuncs.push_back({
+                textRva + startOff,
+                textRva + endOff,
+                (uint32_t)frames[fn.name].frameSize
+                });
         }
 
         if (!symbolOffsets.count("main"))
@@ -780,6 +798,90 @@ namespace vcb {
                     "codegen: undefined function '" + cf.target + "'");
             int32_t rel = (int32_t)it->second - (int32_t)(cf.pos + 4);
             std::memcpy(&r.text[cf.pos], &rel, 4);
+        }
+
+        // ---- Build .xdata (UNWIND_INFO blob) and .pdata (RUNTIME_FUNCTION
+        //      array) for user functions and the entry stub.
+        //
+        // Every FunctionEmitter prolog is exactly:
+        //     push rbp          ; 1 byte
+        //     mov rbp, rsp      ; 3 bytes
+        //     sub rsp, frameSize ; 7 bytes (REX.W + 81 /5 imm32)
+        // Total 11 bytes.  The entry stub's prolog is only:
+        //     sub rsp, 40       ; 7 bytes
+        // Total 7 bytes.
+        //
+        // Runtime emitters do not get .pdata entries in this drop; a
+        // fault inside one terminates the process cleanly, which is
+        // adequate until runtime unwind metadata lands.
+        {
+            auto pad4 = [](std::vector<uint8_t>& v) {
+                while (v.size() % 4) v.push_back(0);
+                };
+
+            auto makeFrameUnwind = [&](uint32_t frameSize) {
+                std::vector<uint8_t> info;
+                info.push_back(0x01);   // Version=1, Flags=0
+                info.push_back(11);     // SizeOfProlog (bytes)
+                info.push_back(5);      // CountOfCodes (slots)
+                info.push_back(0x05);   // FrameRegister=RBP, FrameOffset=0
+                // Code[0..2]: UWOP_ALLOC_LARGE (Op=1, OpInfo=1, 32-bit size)
+                info.push_back(4);      // CodeOffset of "sub rsp"
+                info.push_back(0x11);   // (OpInfo=1 << 4) | UnwindOp=1
+                info.push_back((uint8_t)(frameSize));
+                info.push_back((uint8_t)(frameSize >> 8));
+                info.push_back((uint8_t)(frameSize >> 16));
+                info.push_back((uint8_t)(frameSize >> 24));
+                // Code[3]: UWOP_SET_FPREG (Op=3, OpInfo=0)
+                info.push_back(1);      // CodeOffset of "mov rbp, rsp"
+                info.push_back(0x03);
+                // Code[4]: UWOP_PUSH_NONVOL rbp (Op=0, OpInfo=5)
+                info.push_back(0);      // CodeOffset of "push rbp"
+                info.push_back(0x50);   // (OpInfo=5 << 4) | UnwindOp=0
+                pad4(info);
+                return info;
+                };
+
+            auto makeEntryStubUnwind = [&](uint32_t frameSize) {
+                std::vector<uint8_t> info;
+                info.push_back(0x01);   // Version=1, Flags=0
+                info.push_back(7);      // SizeOfProlog
+                info.push_back(1);      // CountOfCodes
+                info.push_back(0x00);   // FrameRegister=0, FrameOffset=0
+                // Code[0]: UWOP_ALLOC_SMALL (Op=2).  OpInfo = size/8 - 1.
+                uint8_t infoBits = (uint8_t)((frameSize / 8) - 1);
+                info.push_back(0);      // CodeOffset
+                info.push_back((uint8_t)((infoBits << 4) | 2));
+                pad4(info);
+                return info;
+                };
+
+            for (auto& f : userFuncs) {
+                std::vector<uint8_t> uw = makeFrameUnwind(f.frameSize);
+                UnwindEntry ue;
+                ue.funcOffset = f.startRva - textRva;
+                ue.funcSize = f.endRva - f.startRva;
+                ue.unwindOffset = (uint32_t)r.xdata.size();
+                r.xdata.insert(r.xdata.end(), uw.begin(), uw.end());
+                r.unwindEntries.push_back(ue);
+            }
+
+            // Entry stub (emitted above, size = text.size() - entryOffset).
+            {
+                std::vector<uint8_t> uw = makeEntryStubUnwind(40);
+                UnwindEntry ue;
+                ue.funcOffset = r.entryOffset;
+                ue.funcSize = (uint32_t)r.text.size() - r.entryOffset;
+                ue.unwindOffset = (uint32_t)r.xdata.size();
+                r.xdata.insert(r.xdata.end(), uw.begin(), uw.end());
+                r.unwindEntries.push_back(ue);
+            }
+
+            // .pdata entries must be sorted by BeginAddress.
+            std::stable_sort(r.unwindEntries.begin(), r.unwindEntries.end(),
+                [](const UnwindEntry& a, const UnwindEntry& b) {
+                    return a.funcOffset < b.funcOffset;
+                });
         }
 
         return r;

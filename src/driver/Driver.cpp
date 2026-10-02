@@ -28,7 +28,7 @@ namespace vcb {
         }
 
         int cmdVersion() {
-            std::printf("vcb 0.3.5 (Phase 27 Part 3, PE padding)\n");
+            std::printf("vcb 0.5.2 (Phase 27 Part 9, loader-consistent PE)\n");
             return 0;
         }
 
@@ -90,10 +90,18 @@ namespace vcb {
                 pi.text = &cg.text;
                 pi.rdata = &cg.rdata;
                 pi.idata = &cg.idata;
+                pi.xdata = &cg.xdata;
+                pi.unwindEntries = &cg.unwindEntries;
+                // The image is fully PIC: every reference is RIP-relative
+                // or an RVA that the loader resolves by adding the base
+                // (import table entries).  There are no absolute VAs in
+                // .text, so the .reloc section would legitimately be
+                // empty.  Some Windows 11 builds reject images that set
+                // DYNAMIC_BASE with a zero-entry .reloc, so disable ASLR
+                // and set RELOCS_STRIPPED — the coherent, fixed-base
+                // configuration.
+                pi.enableAslr = false;
                 pi.entryOffset = cg.entryOffset;
-                pi.textRva = 0x1000;
-                pi.rdataRva = cg.rdataRva;
-                pi.idataRva = cg.idataRva;
                 pi.iatRva = cg.iatRva;
                 pi.iatSize = cg.iatSize;
                 pi.importRva = cg.importRva;

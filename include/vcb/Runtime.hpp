@@ -11,9 +11,11 @@ namespace vcb {
         uint32_t iatGetStdHandle = 0;
         uint32_t iatWriteFile = 0;
         uint32_t iatExitProcess = 0;
-        uint32_t iatMalloc = 0;
-        uint32_t iatRealloc = 0;
-        uint32_t iatFree = 0;
+        // kernel32 heap APIs.  Replaces the old msvcrt malloc/realloc/free;
+        // the generated image has no CRT dependency at all.
+        uint32_t iatGetProcessHeap = 0;
+        uint32_t iatHeapAlloc = 0;
+        uint32_t iatHeapReAlloc = 0;
     };
 
     std::unordered_map<std::string, uint32_t> emitRuntime(
