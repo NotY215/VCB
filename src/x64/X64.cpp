@@ -695,13 +695,10 @@ namespace vcb {
             { "kernel32.dll", { "ExitProcess", "GetStdHandle", "WriteFile",
                                 "GetProcessHeap", "HeapAlloc", "HeapReAlloc" } }
         };
-        ImportLayout layout = buildImports(r.idataRva, imports);
+        constexpr uint32_t kIdataRva = 0x3000;
+        ImportLayout layout = buildImports(kIdataRva, imports);
 
         r.idata = std::move(layout.idata);
-        r.importRva = layout.importRva;
-        r.importSize = layout.importSize;
-        r.iatRva = layout.iatRva;
-        r.iatSize = layout.iatSize;
 
         RuntimeImports ri;
         ri.iatGetStdHandle = layout.iatByName.at("GetStdHandle");
