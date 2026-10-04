@@ -56,7 +56,7 @@ VCB does not parse `.vyu⟧ directly. The Vayu compiler produces VCBIR and VCB c
 
 ## Current Status
 
-**VCB 0.3.5 — Phase 27 Parts 1–16 complete; Part 17 next**
+**VCB 0.5.3 — Phase 27 Parts 1–14 complete; Part 15 current; Parts 16–17 next**
 
 The current backend provides:
 
@@ -77,7 +77,7 @@ The current backend provides:
 - output-directory creation by the driver
 - PE image padding and related diagnostics
 
-The latest implementation is **Phase 27 Part 3**, including PE padding and additional Linux runtime emitters.
+The latest implementation is the Phase 27 backend through the x64 helper consolidation and PE unwind metadata work. Part 15 currently emits `.pdata` / `.xdata` for user functions and the entry stub. Runtime helper unwind coverage and the Linux ELF validation matrix are not yet complete.
 
 ---
 
@@ -101,9 +101,9 @@ Phase 27 tracks native-backend correctness, runtime coverage, executable-format 
 | 12 | Done | Import-table construction remains in `X64.cpp`; runtime `.pdata` deferred to Part 15 |
 | 13 | Done | `X64Common.hpp` extracted; `X64.cpp` reduced to a thin wrapper |
 | 14 | Done | PE test matrix covering 11 programs; `t10` fixed |
-| 15 | Done | Runtime `.pdata` through `emitRuntime(..., &unwindEntries)`; `.xdata` built from all entries |
-| 16 | Done | Linux ELF matrix via `tests\\elf_matrix.ps1` |
-| 17 | Next | Move import-table construction into `writePe`, remove `kIdataRva` hardcode, add Linux `.eh_frame` |
+| 15 | Working | `.pdata` / `.xdata` for user functions and the entry stub; runtime helper unwind coverage remains |
+| 16 | Next | Add `tests\\elf_matrix.ps1` for repeatable Linux ELF validation |
+| 17 | Planned | Move import-table construction into `writePe`, remove `kIdataRva` hardcode, add Linux `.eh_frame` |
 
 ---
 ## Why I Am Making VCB
