@@ -1,0 +1,5 @@
+func main() -> i64 {
+entry:
+  i64 %z = const.i64 0
+  ret %z
+}

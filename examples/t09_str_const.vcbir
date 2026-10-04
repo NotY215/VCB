@@ -1,0 +1,20 @@
+func greet(who: i64) -> i64 {
+entry:
+  i64 %hello = const.str "hello"
+  call vayu_print_str(%hello)
+  call vayu_print_space()
+  call vayu_print_str(who)
+  call vayu_print_ln()
+  i64 %z = const.i64 0
+  ret %z
+}
+
+func main() -> i64 {
+entry:
+  i64 %a = const.str "world"
+  call greet(%a)
+  i64 %b = const.str "vayu"
+  call greet(%b)
+  i64 %z = const.i64 0
+  ret %z
+}

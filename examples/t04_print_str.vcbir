@@ -1,0 +1,11 @@
+func main() -> i64 {
+entry:
+  i64 %s = const.str "hello, vayu"
+  call vayu_print_str(%s)
+  call vayu_print_ln()
+  i64 %e = const.str ""
+  call vayu_print_str(%e)
+  call vayu_print_ln()
+  i64 %z = const.i64 0
+  ret %z
+}

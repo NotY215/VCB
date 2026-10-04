@@ -1,0 +1,19 @@
+func main() -> i64 {
+entry:
+  i64 %p = const.i64 42
+  call vayu_print_int(%p)
+  call vayu_print_ln()
+  i64 %b = const.i64 1
+  call vayu_print_bool(%b)
+  call vayu_print_ln()
+  i64 %s = const.str "imports"
+  call vayu_print_str(%s)
+  call vayu_print_ln()
+  i64 %l = call vayu_list_new()
+  i64 %a = const.i64 7
+  call vayu_list_push(%l, %a)
+  call vayu_print_list(%l)
+  call vayu_print_ln()
+  i64 %z = const.i64 0
+  ret %z
+}

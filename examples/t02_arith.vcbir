@@ -1,0 +1,22 @@
+func main() -> i64 {
+entry:
+  i64 %a = const.i64 7
+  i64 %b = const.i64 5
+  i64 %s = add %a, %b
+  call vayu_print_int(%s)
+  call vayu_print_ln()
+  i64 %d = sub %a, %b
+  call vayu_print_int(%d)
+  call vayu_print_ln()
+  i64 %p = mul %a, %b
+  call vayu_print_int(%p)
+  call vayu_print_ln()
+  i64 %q = div %a, %b
+  call vayu_print_int(%q)
+  call vayu_print_ln()
+  i64 %r = mod %a, %b
+  call vayu_print_int(%r)
+  call vayu_print_ln()
+  i64 %z = const.i64 0
+  ret %z
+}

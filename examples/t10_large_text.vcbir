@@ -1,0 +1,30 @@
+func op(n: i64, m: i64) -> i64 {
+entry:
+  i64 %a = add n, m
+  i64 %b = sub a, n
+  i64 %c = mul b, m
+  i64 %d = div c, m
+  i64 %e = add d, n
+  ret %e
+}
+
+func main() -> i64 {
+entry:
+  i64 %z = const.i64 0
+  i64 %i = const.i64 0
+  i64 %one = const.i64 1
+  i64 %ten = const.i64 10
+  jmp head
+head:
+  i64 %c = phi %i [entry], %n [body]
+  i64 %lt = lt %c, %ten
+  br %lt, body, done
+body:
+  i64 %r = call op(%c, %one)
+  call vayu_print_int(%r)
+  call vayu_print_ln()
+  i64 %n = add %c, %one
+  jmp head
+done:
+  ret %z
+}

@@ -1,0 +1,19 @@
+func f(a: i64, b: i64) -> i64 {
+entry:
+  i64 %s = add a, b
+  ret %s
+}
+
+func main() -> i64 {
+entry:
+  i64 %x = const.i64 100
+  i64 %y = const.i64 200
+  i64 %r1 = call f(%x, %y)
+  call vayu_print_int(%r1)
+  call vayu_print_ln()
+  i64 %r2 = call f(%r1, %x)
+  call vayu_print_int(%r2)
+  call vayu_print_ln()
+  i64 %z = const.i64 0
+  ret %z
+}

@@ -1,0 +1,11 @@
+func main() -> i64 {
+entry:
+  i64 %t = const.i64 1
+  call vayu_print_bool(%t)
+  call vayu_print_ln()
+  i64 %f = const.i64 0
+  call vayu_print_bool(%f)
+  call vayu_print_ln()
+  i64 %z = const.i64 0
+  ret %z
+}

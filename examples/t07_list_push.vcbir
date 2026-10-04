@@ -1,0 +1,17 @@
+func main() -> i64 {
+entry:
+  i64 %l = call vayu_list_new()
+  i64 %a = const.i64 10
+  call vayu_list_push(%l, %a)
+  i64 %b = const.i64 20
+  call vayu_list_push(%l, %b)
+  i64 %c = const.i64 30
+  call vayu_list_push(%l, %c)
+  i64 %n = call vayu_list_len(%l)
+  call vayu_print_int(%n)
+  call vayu_print_ln()
+  call vayu_print_list(%l)
+  call vayu_print_ln()
+  i64 %z = const.i64 0
+  ret %z
+}
