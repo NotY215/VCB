@@ -1,10 +1,10 @@
 func op(n: i64, m: i64) -> i64 {
 entry:
   i64 %a = add n, m
-  i64 %b = sub a, n
-  i64 %c = mul b, m
-  i64 %d = div c, m
-  i64 %e = add d, n
+  i64 %b = sub %a, n
+  i64 %c = mul %b, m
+  i64 %d = div %c, m
+  i64 %e = add %d, n
   ret %e
 }
 

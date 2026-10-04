@@ -1,4 +1,5 @@
 #include "vcb/Runtime.hpp"
+#include "vcb/X64.hpp"
 #include <cstring>
 #include <stdexcept>
 #include <unordered_set>
@@ -1316,7 +1317,8 @@ namespace vcb {
 
     std::unordered_map<std::string, uint32_t> emitRuntime(
         std::vector<uint8_t>& text, uint32_t textRva,
-        const RuntimeImports& im, const Module& userModule)
+        const RuntimeImports& im, const Module& userModule,
+        std::vector<UnwindEntry>* outUnwinds)
     {
         std::unordered_set<std::string> need;
         for (auto& fn : userModule.functions)
@@ -1359,38 +1361,120 @@ namespace vcb {
             return textRva + off;
             };
 
+        // Emit a runtime function and, if it has a non-empty frame
+        // prolog (frameSize != 0), record an unwind entry.
+        auto emitAndMark = [&](const char* name, uint32_t frameSize,
+            auto&& body) -> uint32_t {
+                uint32_t before = (uint32_t)text.size();
+                uint32_t rva = mark(name);
+                body();
+                if (outUnwinds && frameSize != 0) {
+                    UnwindEntry ue;
+                    ue.funcOffset = before;
+                    ue.funcSize = (uint32_t)text.size() - before;
+                    ue.frameSize = frameSize;
+                    ue.stubOnly = false;
+                    outUnwinds->push_back(ue);
+                }
+                return rva;
+            };
+
         uint32_t printCharRva = 0, printStrRva = 0, printIntRva = 0;
         uint32_t allocRva = 0, strEqRva = 0;
 
-        if (has("vayu_exit")) { mark("vayu_exit");         emitExit(text, textRva, im); }
-        if (has("vayu_print_char")) { printCharRva = mark("vayu_print_char"); emitPrintChar(text, textRva, im); }
-        if (has("vayu_print_ln")) { mark("vayu_print_ln");     emitPrintLn(text, textRva, im); }
-        if (has("vayu_print_space")) { mark("vayu_print_space");  emitPrintSpace(text, textRva, im); }
-        if (has("vayu_print_bool")) { mark("vayu_print_bool");   emitPrintBool(text, textRva, im); }
-        if (has("vayu_print_str")) { printStrRva = mark("vayu_print_str"); emitPrintStr(text, textRva, im); }
-        if (has("vayu_print_int")) { printIntRva = mark("vayu_print_int"); emitPrintInt(text, textRva, im); }
-        if (has("vayu_print_float")) { mark("vayu_print_float");  emitPrintFloat(text, textRva, im); }
-        if (has("vayu_alloc")) { allocRva = mark("vayu_alloc"); emitAlloc(text, textRva, im); }
-        if (has("vayu_str_len")) { mark("vayu_str_len");      emitStrLen(text, textRva); }
-        if (has("vayu_str_eq")) { strEqRva = mark("vayu_str_eq"); emitStrEq(text, textRva); }
-        if (has("vayu_str_starts_with")) { mark("vayu_str_starts_with"); emitStrStartsWith(text, textRva); }
-        if (has("vayu_str_ends_with")) { mark("vayu_str_ends_with");   emitStrEndsWith(text, textRva); }
-        if (has("vayu_str_contains")) { mark("vayu_str_contains");    emitStrContains(text, textRva); }
-        if (has("vayu_str_find")) { mark("vayu_str_find");        emitStrFind(text, textRva); }
-        if (has("vayu_str_upper")) { mark("vayu_str_upper");       emitStrUpper(text, textRva, allocRva); }
-        if (has("vayu_str_lower")) { mark("vayu_str_lower");       emitStrLower(text, textRva, allocRva); }
-        if (has("vayu_list_new")) { mark("vayu_list_new");        emitListNew(text, textRva, allocRva); }
-        if (has("vayu_list_push")) { mark("vayu_list_push");       emitListPush(text, textRva, allocRva); }
-        if (has("vayu_list_get")) { mark("vayu_list_get");        emitListGet(text, textRva); }
-        if (has("vayu_list_set")) { mark("vayu_list_set");        emitListSet(text, textRva); }
-        if (has("vayu_list_len")) { mark("vayu_list_len");        emitListLen(text, textRva); }
-        if (has("vayu_map_new")) { mark("vayu_map_new");         emitMapNew(text, textRva, allocRva); }
-        if (has("vayu_map_put")) { mark("vayu_map_put");         emitMapPut(text, textRva, strEqRva, allocRva); }
-        if (has("vayu_map_get")) { mark("vayu_map_get");         emitMapGet(text, textRva, strEqRva); }
-        if (has("vayu_map_has")) { mark("vayu_map_has");         emitMapHas(text, textRva, strEqRva); }
-        if (has("vayu_map_len")) { mark("vayu_map_len");         emitMapLen(text, textRva); }
-        if (has("vayu_print_list")) { mark("vayu_print_list");      emitPrintList(text, textRva, printIntRva, printCharRva); }
-        if (has("vayu_print_map")) { mark("vayu_print_map");       emitPrintMap(text, textRva, printIntRva, printStrRva, printCharRva); }
+        if (has("vayu_exit"))
+            emitAndMark("vayu_exit", 32,
+                [&] { emitExit(text, textRva, im); });
+        if (has("vayu_print_char"))
+            printCharRva = emitAndMark("vayu_print_char", 64,
+                [&] { emitPrintChar(text, textRva, im); });
+        if (has("vayu_print_ln"))
+            emitAndMark("vayu_print_ln", 64,
+                [&] { emitPrintLn(text, textRva, im); });
+        if (has("vayu_print_space"))
+            emitAndMark("vayu_print_space", 64,
+                [&] { emitPrintSpace(text, textRva, im); });
+        if (has("vayu_print_bool"))
+            emitAndMark("vayu_print_bool", 64,
+                [&] { emitPrintBool(text, textRva, im); });
+        if (has("vayu_print_str"))
+            printStrRva = emitAndMark("vayu_print_str", 64,
+                [&] { emitPrintStr(text, textRva, im); });
+        if (has("vayu_print_int"))
+            printIntRva = emitAndMark("vayu_print_int", 128,
+                [&] { emitPrintInt(text, textRva, im); });
+        if (has("vayu_print_float"))
+            emitAndMark("vayu_print_float", 512,
+                [&] { emitPrintFloat(text, textRva, im); });
+        if (has("vayu_alloc"))
+            allocRva = emitAndMark("vayu_alloc", 48,
+                [&] { emitAlloc(text, textRva, im); });
+
+        // String helpers with no prolog (leaf) or with a prolog.
+        if (has("vayu_str_len"))
+            emitAndMark("vayu_str_len", 0,
+                [&] { emitStrLen(text, textRva); });
+        if (has("vayu_str_eq"))
+            strEqRva = emitAndMark("vayu_str_eq", 0,
+                [&] { emitStrEq(text, textRva); });
+        if (has("vayu_str_starts_with"))
+            emitAndMark("vayu_str_starts_with", 0,
+                [&] { emitStrStartsWith(text, textRva); });
+        if (has("vayu_str_ends_with"))
+            emitAndMark("vayu_str_ends_with", 0,
+                [&] { emitStrEndsWith(text, textRva); });
+        if (has("vayu_str_contains"))
+            emitAndMark("vayu_str_contains", 48,
+                [&] { emitStrContains(text, textRva); });
+        if (has("vayu_str_find"))
+            emitAndMark("vayu_str_find", 48,
+                [&] { emitStrFind(text, textRva); });
+        if (has("vayu_str_upper"))
+            emitAndMark("vayu_str_upper", 48,
+                [&] { emitStrUpper(text, textRva, allocRva); });
+        if (has("vayu_str_lower"))
+            emitAndMark("vayu_str_lower", 48,
+                [&] { emitStrLower(text, textRva, allocRva); });
+
+        if (has("vayu_list_new"))
+            emitAndMark("vayu_list_new", 32,
+                [&] { emitListNew(text, textRva, allocRva); });
+        if (has("vayu_list_push"))
+            emitAndMark("vayu_list_push", 96,
+                [&] { emitListPush(text, textRva, allocRva); });
+        if (has("vayu_list_get"))
+            emitAndMark("vayu_list_get", 0,
+                [&] { emitListGet(text, textRva); });
+        if (has("vayu_list_set"))
+            emitAndMark("vayu_list_set", 0,
+                [&] { emitListSet(text, textRva); });
+        if (has("vayu_list_len"))
+            emitAndMark("vayu_list_len", 0,
+                [&] { emitListLen(text, textRva); });
+
+        if (has("vayu_map_new"))
+            emitAndMark("vayu_map_new", 32,
+                [&] { emitMapNew(text, textRva, allocRva); });
+        if (has("vayu_map_put"))
+            emitAndMark("vayu_map_put", 96,
+                [&] { emitMapPut(text, textRva, strEqRva, allocRva); });
+        if (has("vayu_map_get"))
+            emitAndMark("vayu_map_get", 48,
+                [&] { emitMapGet(text, textRva, strEqRva); });
+        if (has("vayu_map_has"))
+            emitAndMark("vayu_map_has", 48,
+                [&] { emitMapHas(text, textRva, strEqRva); });
+        if (has("vayu_map_len"))
+            emitAndMark("vayu_map_len", 0,
+                [&] { emitMapLen(text, textRva); });
+
+        if (has("vayu_print_list"))
+            emitAndMark("vayu_print_list", 64,
+                [&] { emitPrintList(text, textRva, printIntRva, printCharRva); });
+        if (has("vayu_print_map"))
+            emitAndMark("vayu_print_map", 64,
+                [&] { emitPrintMap(text, textRva, printIntRva, printStrRva,
+                    printCharRva); });
 
         return syms;
     }

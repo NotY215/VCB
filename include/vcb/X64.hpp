@@ -14,6 +14,12 @@ namespace vcb {
         uint32_t funcOffset = 0;
         uint32_t funcSize = 0;
         uint32_t unwindOffset = 0;
+        // Used only while building .xdata.  Runtime and user functions
+        // use the full frame prolog (push rbp; mov rbp, rsp; sub rsp, N)
+        // and set stubOnly=false.  The entry stub uses a bare sub rsp, N
+        // and sets stubOnly=true.  frameSize is N.
+        uint32_t frameSize = 0;
+        bool     stubOnly = false;
     };
 
     // One DLL and the functions imported from it.  Consumed by

@@ -155,7 +155,8 @@ namespace vcb {
         ri.iatHeapAlloc = layout.iatByName.at("HeapAlloc");
         ri.iatHeapReAlloc = layout.iatByName.at("HeapReAlloc");
 
-        auto symbolOffsets = emitRuntime(r.text, textRva, ri, m);
+        auto symbolOffsets = emitRuntime(r.text, textRva, ri, m,
+            &r.unwindEntries);
 
         std::vector<CallFixup>    callFixups;
         std::vector<StringFixup>  stringFixups;
@@ -243,13 +244,17 @@ namespace vcb {
         }
 
         // ---- Build .xdata (UNWIND_INFO blob) and .pdata (RUNTIME_FUNCTION
-        //      array) for user functions and the entry stub.
+        //      array).
         //
-        //   FunctionEmitter prolog:  push rbp (1) + mov rbp, rsp (3)
-        //                          + sub rsp, frameSize (7) = 11 bytes.
-        //   Entry stub prolog     :  sub rsp, 40 (7)         =  7 bytes.
+        // r.unwindEntries currently contains, unsorted and without
+        // .xdata offsets:
+        //   - every runtime function with a non-empty prolog, pushed by
+        //     emitRuntime()
+        //   - every user function, pushed below
+        //   - the entry stub, pushed below
         //
-        // Runtime emitters do not get .pdata entries yet (Phase 27 Part 12).
+        // Sort by funcOffset, then assign each entry a .xdata offset as
+        // its UNWIND_INFO record is appended.
         {
             auto pad4 = [](std::vector<uint8_t>& v) {
                 while (v.size() % 4) v.push_back(0);
@@ -258,12 +263,12 @@ namespace vcb {
             auto makeFrameUnwind = [&](uint32_t frameSize) {
                 std::vector<uint8_t> info;
                 info.push_back(0x01);   // Version=1, Flags=0
-                info.push_back(11);     // SizeOfProlog
+                info.push_back(11);     // SizeOfProlog (bytes)
                 info.push_back(5);      // CountOfCodes
                 info.push_back(0x05);   // FrameRegister=RBP, FrameOffset=0
-                // Code[0..2]: UWOP_ALLOC_LARGE (Op=1, OpInfo=1, 32-bit)
-                info.push_back(4);
-                info.push_back(0x11);
+                // Code[0..2]: UWOP_ALLOC_LARGE (Op=1, OpInfo=1, 32-bit size)
+                info.push_back(4);      // CodeOffset of "sub rsp"
+                info.push_back(0x11);   // (OpInfo=1 << 4) | UnwindOp=1
                 info.push_back((uint8_t)(frameSize));
                 info.push_back((uint8_t)(frameSize >> 8));
                 info.push_back((uint8_t)(frameSize >> 16));
@@ -291,30 +296,40 @@ namespace vcb {
                 return info;
                 };
 
+            // User functions
             for (auto& f : userFuncs) {
-                std::vector<uint8_t> uw = makeFrameUnwind(f.frameSize);
                 UnwindEntry ue;
                 ue.funcOffset = f.startRva - textRva;
                 ue.funcSize = f.endRva - f.startRva;
-                ue.unwindOffset = (uint32_t)r.xdata.size();
-                r.xdata.insert(r.xdata.end(), uw.begin(), uw.end());
+                ue.frameSize = f.frameSize;
+                ue.stubOnly = false;
                 r.unwindEntries.push_back(ue);
             }
 
+            // Entry stub
             {
-                std::vector<uint8_t> uw = makeEntryStubUnwind(40);
                 UnwindEntry ue;
                 ue.funcOffset = r.entryOffset;
                 ue.funcSize = (uint32_t)r.text.size() - r.entryOffset;
-                ue.unwindOffset = (uint32_t)r.xdata.size();
-                r.xdata.insert(r.xdata.end(), uw.begin(), uw.end());
+                ue.frameSize = 40;
+                ue.stubOnly = true;
                 r.unwindEntries.push_back(ue);
             }
 
+            // Sort by BeginAddress (required by the Windows loader).
             std::stable_sort(r.unwindEntries.begin(), r.unwindEntries.end(),
                 [](const UnwindEntry& a, const UnwindEntry& b) {
                     return a.funcOffset < b.funcOffset;
                 });
+
+            // Build .xdata and assign unwindOffset for each entry.
+            for (auto& ue : r.unwindEntries) {
+                std::vector<uint8_t> uw = ue.stubOnly
+                    ? makeEntryStubUnwind(ue.frameSize)
+                    : makeFrameUnwind(ue.frameSize);
+                ue.unwindOffset = (uint32_t)r.xdata.size();
+                r.xdata.insert(r.xdata.end(), uw.begin(), uw.end());
+            }
         }
 
         return r;

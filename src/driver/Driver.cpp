@@ -45,7 +45,7 @@ namespace vcb {
         }
 
         int cmdVersion() {
-            std::printf("vcb 0.5.3 (Phase 27 Part 10, code signing)\n");
+            std::printf("vcb 0.6.0 (Phase 27 complete, PE + ELF)\n");
             return 0;
         }
 

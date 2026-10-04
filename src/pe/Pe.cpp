@@ -560,6 +560,72 @@ namespace vcb {
         if (!entryInText)
             ERR("AddressOfEntryPoint 0x%X is not inside an executable section", entry);
 
+        // ---- .pdata / .xdata consistency -----------------------------
+        // RUNTIME_FUNCTION.UnwindData is an RVA into .xdata.  If .pdata
+        // exists without .xdata, every unwinder reaching this image will
+        // dereference an RVA that resolves to nothing.  Catch it here.
+        {
+            uint32_t pdataSize = 0, xdataSize = 0;
+            for (uint32_t i = 0; i < numSects; ++i) {
+                size_t s = optEnd + 40 * i;
+                if (s + 40 > f.size()) break;
+                char name[9] = { 0 };
+                std::memcpy(name, &f[s], 8);
+                if (std::strcmp(name, ".pdata") == 0)
+                    pdataSize = getU32(f, s + 8);   // VirtualSize
+                else if (std::strcmp(name, ".xdata") == 0)
+                    xdataSize = getU32(f, s + 8);
+            }
+            if (pdataSize != 0 && xdataSize == 0)
+                ERR(".pdata present (size=0x%X) but .xdata missing; "
+                    "RUNTIME_FUNCTION.UnwindData will not resolve",
+                    pdataSize);
+            if (pdataSize != 0 && (pdataSize % 12) != 0)
+                ERR(".pdata VirtualSize 0x%X is not a multiple of "
+                    "sizeof(RUNTIME_FUNCTION)=12", pdataSize);
+            if (xdataSize != 0 && pdataSize == 0)
+                WARN(".xdata present but .pdata missing; the unwind blob "
+                    "is unreachable");
+        }
+
+        // ---- .reloc block structure ---------------------------------
+        if (relocRva != 0) {
+            if (relocSize < 8)
+                ERR(".reloc size 0x%X too small for page block + terminator",
+                    relocSize);
+            // Every block must have SizeOfBlock >= 8 and be 4-byte
+            // aligned.  Scan the section; error on the first bad block.
+            for (uint32_t i = 0; i < numSects; ++i) {
+                size_t s = optEnd + 40 * i;
+                if (s + 40 > f.size()) break;
+                char name[9] = { 0 };
+                std::memcpy(name, &f[s], 8);
+                if (std::strcmp(name, ".reloc") != 0) continue;
+                uint32_t rawoff = getU32(f, s + 20);
+                uint32_t rawsz = getU32(f, s + 16);
+                uint32_t p = rawoff;
+                uint32_t end = rawoff + rawsz;
+                if (end > f.size()) end = (uint32_t)f.size();
+                while (p + 8 <= end) {
+                    uint32_t pageRva = getU32(f, p);
+                    uint32_t blockSz = getU32(f, p + 4);
+                    if (pageRva == 0 && blockSz == 0) break;   // terminator
+                    if (blockSz < 8 || (blockSz % 4) != 0) {
+                        ERR(".reloc block at file offset 0x%X has bad "
+                            "SizeOfBlock 0x%X", p, blockSz);
+                        break;
+                    }
+                    if (p + blockSz > end) {
+                        ERR(".reloc block at file offset 0x%X extends "
+                            "past section end", p);
+                        break;
+                    }
+                    p += blockSz;
+                }
+                break;
+            }
+        }
+
         // ---- Data directory checks ----
         if (importRva == 0) WARN("Import Directory RVA is zero");
         else if (importRva >= sizeOfImage)
