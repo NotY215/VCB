@@ -56,7 +56,7 @@ VCB does not parse `.vyu⟧ directly. The Vayu compiler produces VCBIR and VCB c
 
 ## Current Status
 
-**VCB 0.3.5 — Phase 27 Part 3**
+**VCB 0.3.5 — Phase 27 Parts 1–16 complete; Part 17 next**
 
 The current backend provides:
 
@@ -81,6 +81,31 @@ The latest implementation is **Phase 27 Part 3**, including PE padding and addit
 
 ---
 
+## Phase 27 Roadmap
+
+Phase 27 tracks native-backend correctness, runtime coverage, executable-format support, and cross-target validation.
+
+| Part | Status | Scope |
+|---|---|---|
+| 1 | Done | ELF writer and Linux syscall runtime subset |
+| 2 | Done | Linux `brk` heap, list/map runtime, string methods |
+| 3 | Done | PE padding heuristic |
+| 4 | Done | `DYNAMIC_BASE` handling, dynamic sections, shadow space |
+| 5 | Done | Minimal `.reloc` support |
+| 6 | Done | ASLR re-enabled; `.pdata` / `.xdata` for user functions and entry stub |
+| 7 | Done | kernel32 heap APIs |
+| 8 | Done | Linux `vayu_print_float` |
+| 9 | Done | `.rdata` emission, padding, `RELOCS_STRIPPED` and ASLR handling |
+| 10 | Done | `vcb sign`, `vcb verify`, `vcb build --sign` |
+| 11 | Partial | WDAC supplemental policy generation; full policy acceptance depends on Microsoft-trusted signing or a machine without the inbox policy |
+| 12 | Done | Import-table construction remains in `X64.cpp`; runtime `.pdata` deferred to Part 15 |
+| 13 | Done | `X64Common.hpp` extracted; `X64.cpp` reduced to a thin wrapper |
+| 14 | Done | PE test matrix covering 11 programs; `t10` fixed |
+| 15 | Done | Runtime `.pdata` through `emitRuntime(..., &unwindEntries)`; `.xdata` built from all entries |
+| 16 | Done | Linux ELF matrix via `tests\\elf_matrix.ps1` |
+| 17 | Next | Move import-table construction into `writePe`, remove `kIdataRva` hardcode, add Linux `.eh_frame` |
+
+---
 ## Why I Am Making VCB
 
 VCB exists to give Vayu its own native backend instead of depending on a large external compiler backend.
