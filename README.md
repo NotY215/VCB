@@ -56,7 +56,7 @@ VCB does not parse `.vyu⟧ directly. The Vayu compiler produces VCBIR and VCB c
 
 ## Current Status
 
-**VCB 0.5.3 — Phase 27 Parts 1–14 complete; Part 15 current; Parts 16–17 next**
+**VCB 0.5.3 — Phase 27 Parts 1–16 complete; Part 11 partial; Part 17 next**
 
 The current backend provides:
 
@@ -101,9 +101,23 @@ Phase 27 tracks native-backend correctness, runtime coverage, executable-format 
 | 12 | Done | Import-table construction remains in `X64.cpp`; runtime `.pdata` deferred to Part 15 |
 | 13 | Done | `X64Common.hpp` extracted; `X64.cpp` reduced to a thin wrapper |
 | 14 | Done | PE test matrix covering 11 programs; `t10` fixed |
-| 15 | Working | `.pdata` / `.xdata` for user functions and the entry stub; runtime helper unwind coverage remains |
-| 16 | Next | Add `tests\\elf_matrix.ps1` for repeatable Linux ELF validation |
-| 17 | Planned | Move import-table construction into `writePe`, remove `kIdataRva` hardcode, add Linux `.eh_frame` |
+| 15 | Done | Runtime `.pdata` via `emitRuntime(..., &unwindEntries)`; `.xdata` built from all unwind entries |
+| 16 | Done | `tests\\elf_matrix.ps1` for repeatable Linux ELF validation |
+| 17 | Next | Move import-table construction into `writePe`, remove `kIdataRva` hardcode, add Linux `.eh_frame` |
+
+## Phase 28+ Roadmap
+
+| Phase | Status | Scope |
+|---|---|---|
+| 28 Part 1 | Working | Benchmark foundation and VCB benchmark preparation |
+| 28 Part 2 | Pending | Benchmark suite with checkpointed runner |
+| 29 | After 28 | Version cut |
+| 30 | Planned | Structs + classes + inheritance in VCB |
+| 31 | Planned | Exceptions in VCB |
+| 32 | Planned | Generators in VCB |
+| 33 | Planned | Lambdas / closures in VCB |
+| 34 | Planned | Tuples, sets, slicing, `range(a,b,c)`, `str(x)` dispatch |
+| 35 | Planned | Self-hosting on VCB IR; fixpoint re-enabled in harness |
 
 ---
 ## Why I Am Making VCB
