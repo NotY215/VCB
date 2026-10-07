@@ -1,0 +1,10 @@
+func main() -> i64 {
+entry:
+  i64 %a = const.str "foo"
+  i64 %b = const.str "bar"
+  i64 %c = call vayu_str_concat(%a, %b)
+  call vayu_print_str(%c)
+  call vayu_print_ln()
+  i64 %z = const.i64 0
+  ret %z
+}

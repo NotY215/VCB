@@ -22,6 +22,7 @@ add_executable(vcb
     src/x64/X64Elf.cpp
     src/x64/Runtime.cpp
     src/pe/Pe.cpp
+    src/pe/Resources.cpp
     src/elf/Elf.cpp
     src/driver/Driver.cpp
 )

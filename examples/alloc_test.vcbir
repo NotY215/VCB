@@ -1,0 +1,10 @@
+func main() -> i64 {
+entry:
+  i64 %n = const.i64 64
+  i64 %p = call vayu_alloc(%n)
+  i64 %v = const.i64 12345
+  call vayu_print_int(%v)
+  call vayu_print_ln()
+  i64 %z = const.i64 0
+  ret %z
+}

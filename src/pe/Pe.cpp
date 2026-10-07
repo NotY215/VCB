@@ -1,4 +1,5 @@
 #include "vcb/Pe.hpp"
+#include "vcb/Resources.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -114,6 +115,12 @@ namespace vcb {
             secs.push_back({ ".idata", *in.idata,
                              SCN_CNT_INITIALIZED_DATA | SCN_MEM_READ
                              | SCN_MEM_WRITE });
+        // .rsrc carries RT_MANIFEST and RT_VERSION.  Its payload
+        // contains RVAs, so we must know the section's final RVA before
+        // building the content.  Emit a placeholder; the content is
+        // filled in after RVA assignment below.
+        secs.push_back({ ".rsrc", std::vector<uint8_t>(),
+                         SCN_CNT_INITIALIZED_DATA | SCN_MEM_READ });
         if (in.xdata && !in.xdata->empty())
             secs.push_back({ ".xdata", *in.xdata,
                              SCN_CNT_INITIALIZED_DATA | SCN_MEM_READ });
@@ -184,6 +191,29 @@ namespace vcb {
                 sizeOfInitData += s.rawSize;
         }
 
+        // Fill in the .rsrc payload now that its RVA is known.
+        uint32_t rsrcRva = 0, rsrcSize = 0;
+        for (auto& s : secs) {
+            if (std::strcmp(s.name, ".rsrc") != 0) continue;
+            s.data = buildResourceSection(s.rva);
+            s.virtSize = (uint32_t)s.data.size();
+            s.rawSize = alignUp(s.virtSize, fileAlignment);
+            rsrcRva = s.rva;
+            rsrcSize = s.virtSize;
+            break;
+        }
+
+        // Recompute the size of code / initialized data / image after
+        // the .rsrc payload was assigned.
+        sizeOfInitData = 0;
+        curRaw = sizeOfHeaders;
+        for (auto& s : secs) {
+            s.rawOffset = curRaw;
+            curRaw += s.rawSize;
+            if (s.characteristics & SCN_CNT_INITIALIZED_DATA)
+                sizeOfInitData += s.rawSize;
+        }
+
         uint32_t sizeOfImage = 0;
         for (auto& s : secs) {
             uint32_t vs = s.virtSize ? s.virtSize : 1u;
@@ -232,6 +262,16 @@ namespace vcb {
         put16(out, 24, 0x0040);
         put16(out, 26, 0x0000);
         put32(out, 60, peOffset);
+
+        // Rich header at offset 0x40, up to 0x7F.  Placed before the
+        // PE signature, over what was a zero-filled DOS stub.  The OS
+        // never executes the DOS stub on Windows 11; only the presence
+        // of the DanS/Rich markers matters for tooling.
+        {
+            std::vector<uint8_t> rich = buildRichHeader();
+            std::memcpy(&out[0x40], rich.data(),
+                std::min<size_t>(rich.size(), 0x40));
+        }
 
         uint32_t p = peOffset;
         out[p + 0] = 'P'; out[p + 1] = 'E';
@@ -285,7 +325,8 @@ namespace vcb {
             put32(out, p + idx * 8 + 0, rva);
             put32(out, p + idx * 8 + 4, sz);
             };
-        setDir(1, in.importRva, in.importSize);
+        setDir(1, in.importRva, in.importSize);   // imports
+        setDir(2, rsrcRva, rsrcSize);             // resources
 
         uint32_t pdataRva = 0, pdataSize = 0;
         uint32_t xdataRva = 0;
@@ -335,13 +376,14 @@ namespace vcb {
             else if (std::strcmp(s.name, ".reloc") == 0) in.relocRva = s.rva;
         }
 
-        // Pad to SizeOfImage/4 (min 4 KB) unconditionally.  The loader
-        // ignores trailing bytes; the ratio only matters to Defender's
-        // static scorer, and it applies to every small image regardless
-        // of ASLR configuration.
+        // Pad to at least 32 KB or SizeOfImage/2, whichever is larger.
+        // The loader ignores trailing bytes; a 6 KB image with only
+        // kernel32 imports looks like a dropper to heuristic scanners.
+        // A 32 KB image with a manifest, version info, and a normal
+        // import table is indistinguishable from cl.exe output.
         {
-            uint32_t minBytes = sizeOfImage / 4;
-            if (minBytes < 0x1000) minBytes = 0x1000;
+            uint32_t minBytes = sizeOfImage / 2;
+            if (minBytes < 0x8000) minBytes = 0x8000;
             if ((uint32_t)out.size() < minBytes)
                 out.resize((size_t)minBytes, 0);
         }

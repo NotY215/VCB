@@ -1,0 +1,14 @@
+func f(x: i64) -> i64 {
+entry:
+  ret x
+}
+
+func main() -> i64 {
+entry:
+  i64 %a = const.str "hi"
+  i64 %b = call f(%a)
+  call vayu_print_str(%b)
+  call vayu_print_ln()
+  i64 %z = const.i64 0
+  ret %z
+}
