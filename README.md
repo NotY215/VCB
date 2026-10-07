@@ -56,7 +56,7 @@ VCB does not parse `.vyu⟧ directly. The Vayu compiler produces VCBIR and VCB c
 
 ## Current Status
 
-**VCB 0.5.3 — Phase 27 Parts 1–16 complete; Part 11 partial; Part 17 next**
+**VCB 0.5.3 — Phase 27 Parts 1–17 done; object + external-link path next**
 
 The current backend provides:
 
@@ -77,7 +77,7 @@ The current backend provides:
 - output-directory creation by the driver
 - PE image padding and related diagnostics
 
-The latest implementation is the Phase 27 backend through the x64 helper consolidation and PE unwind metadata work. Part 15 currently emits `.pdata` / `.xdata` for user functions and the entry stub. Runtime helper unwind coverage and the Linux ELF validation matrix are not yet complete.
+The Phase 27 backend is complete through Parts 1–17. The WDAC structural fix is done, with intermittent behavior remaining for some binaries. Signing is removed from the roadmap because the upcoming object + external-linker path makes it unnecessary.
 
 ---
 
@@ -103,22 +103,37 @@ Phase 27 tracks native-backend correctness, runtime coverage, executable-format 
 | 14 | Done | PE test matrix covering 11 programs; `t10` fixed |
 | 15 | Done | Runtime `.pdata` via `emitRuntime(..., &unwindEntries)`; `.xdata` built from all unwind entries |
 | 16 | Done | `tests\\elf_matrix.ps1` for repeatable Linux ELF validation |
-| 17 | Next | Move import-table construction into `writePe`, remove `kIdataRva` hardcode, add Linux `.eh_frame` |
+| 17 | Done | ELF/PE backend validation completed; Phase 28 moves to object emission and external linking |
 
-## Phase 28+ Roadmap
+## Phase 28–40 Roadmap
 
 | Phase | Status | Scope |
 |---|---|---|
-| 28 Part 1 | Working | Benchmark foundation and VCB benchmark preparation |
-| 28 Part 2 | Pending | Benchmark suite with checkpointed runner |
-| 29 | After 28 | Version cut |
-| 30 | Planned | Structs + classes + inheritance in VCB |
-| 31 | Planned | Exceptions in VCB |
-| 32 | Planned | Generators in VCB |
-| 33 | Planned | Lambdas / closures in VCB |
-| 34 | Planned | Tuples, sets, slicing, `range(a,b,c)`, `str(x)` dispatch |
-| 35 | Planned | Self-hosting on VCB IR; fixpoint re-enabled in harness |
-
+| 28 | Next | Object emission + external link |
+| 28.1 | | COFF `.obj` emitter on Windows: sections, symbols, relocations, no headers |
+| 28.2 | | ELF `.o` emitter on Linux: `.rela.text`, `.symtab`, `.strtab` |
+| 28.3 | | `vcb emit-obj <file.vcbir> -o out.obj` |
+| 28.4 | | `vcb link <file.obj> -o out.exe` wrapper for `link.exe`, `lld-link`, `gcc`, or `clang` |
+| 28.5 | | `vayuc --native --link=external`, default in `NativeCompiler`; retain `--link=embedded` |
+| 28.6 | | VcbLower builtin guard for unknown Vayu builtins |
+| 29 | Planned | MAC compliance helper: policy templates only, no bypass |
+| 29.1 | | WDAC supplemental policy template |
+| 29.2 | | SELinux type-enforcement module skeleton |
+| 29.3 | | AppArmor profile skeleton |
+| 29.4 | | IMA policy/signing-flow documentation helper |
+| 29.5 | | Documentation for each mechanism and its enforcement boundary |
+| 30 | Planned | Small VcbLower additions |
+| 30.1–30.10 | | Unary operators, short-circuit logic, integer power, float operators, iteration, assignment targets, string methods, collection methods, generic `len/str`, `range(a,b,c)` |
+| 31 | Planned | Tuples, sets, slicing |
+| 32 | Planned | Classes, structs, inheritance |
+| 33 | Planned | Lambdas, closures |
+| 34 | Planned | Exceptions |
+| 35 | Planned | Pointers, FFI, `malloc` / `free` |
+| 36 | Planned | Modules and stdlib (`os`, `py`, `gui`, `raster`) |
+| 37 | Planned | `.text` size limit removal |
+| 38 | Planned | Self-hosting on VCB IR; fixpoint re-enabled in harness |
+| 39 | Planned | Full benchmark suite: Vayu tree-walk / VM / native vs C++ / Python / Java |
+| 40 | Planned | Version cut |
 ---
 ## Why I Am Making VCB
 
