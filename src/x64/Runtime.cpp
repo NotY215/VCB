@@ -1141,6 +1141,76 @@ namespace vcb {
             a.finalize();
         }
 
+        // ---- Linux x86-64 syscall runtime --------------------------------
+        //   sys_write  = 1   (rdi=fd, rsi=buf, rdx=count)
+        //   sys_exit   = 60  (rdi=code)
+        // Internal calling convention is unchanged (first arg in RCX).
+
+        // vayu_str_concat(a, b) -> new string.
+        //   [0..7]  len(a) + len(b)
+        //   [8..]   a.data || b.data
+        // Platform-neutral: uses callText(allocRva) and nothing else.
+        void emitStrConcat(std::vector<uint8_t>& t, uint32_t rva,
+            uint32_t allocRva) {
+            MiniAsm a(t, rva);
+            a.b(0x55);                                      // push rbp
+            a.b(0x48); a.b(0x89); a.b(0xE5);                // mov rbp, rsp
+            a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x40);     // sub rsp, 64
+            a.b(0x48); a.b(0x89); a.b(0x4D); a.b(0xF8);     // [rbp-8]  = a
+            a.b(0x48); a.b(0x89); a.b(0x55); a.b(0xF0);     // [rbp-16] = b
+            // total = a.len + b.len
+            a.b(0x48); a.b(0x8B); a.b(0x01);                // mov rax, [rcx]   a.len
+            a.b(0x48); a.b(0x8B); a.b(0x0A);                // mov rcx, [rdx]   b.len
+            a.b(0x48); a.b(0x01); a.b(0xC8);                // add rax, rcx
+            a.b(0x48); a.b(0x89); a.b(0x45); a.b(0xE8);     // [rbp-24] = total
+            // alloc(8 + total)
+            a.b(0x48); a.b(0x89); a.b(0xC1);                // mov rcx, rax
+            a.b(0x48); a.b(0x83); a.b(0xC1); a.b(0x08);     // add rcx, 8
+            a.callText(allocRva);
+            a.b(0x48); a.b(0x89); a.b(0x45); a.b(0xE0);     // [rbp-32] = new_s
+            // new_s.len = total
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xE8);     // mov rcx, [rbp-24]
+            a.b(0x48); a.b(0x89); a.b(0x08);                // mov [rax], rcx
+            // copy a.data -> new_s.data
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);     // mov rcx, [rbp-8]
+            a.b(0x48); a.b(0x8B); a.b(0x09);                // mov rcx, [rcx]
+            a.b(0x48); a.b(0x8B); a.b(0x55); a.b(0xF8);     // mov rdx, [rbp-8]
+            a.b(0x48); a.b(0x83); a.b(0xC2); a.b(0x08);     // add rdx, 8
+            a.b(0x48); a.b(0x8B); a.b(0x5D); a.b(0xE0);     // mov rbx, [rbp-32]
+            a.b(0x48); a.b(0x83); a.b(0xC3); a.b(0x08);     // add rbx, 8
+            a.b(0x4D); a.b(0x31); a.b(0xC0);                // xor r8, r8
+            a.label("cc1");
+            a.b(0x4C); a.b(0x39); a.b(0xC1);                // cmp r8, rcx
+            a.jgeShort("cc1e");
+            a.b(0x42); a.b(0x8A); a.b(0x04); a.b(0x02);     // mov al, [rdx+r8]
+            a.b(0x42); a.b(0x88); a.b(0x04); a.b(0x03);     // mov [rbx+r8], al
+            a.b(0x49); a.b(0xFF); a.b(0xC0);                // inc r8
+            a.jmpShort("cc1");
+            a.label("cc1e");
+            // copy b.data -> new_s.data + a.len
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF0);     // mov rcx, [rbp-16]
+            a.b(0x48); a.b(0x8B); a.b(0x09);                // mov rcx, [rcx]
+            a.b(0x48); a.b(0x8B); a.b(0x55); a.b(0xF0);     // mov rdx, [rbp-16]
+            a.b(0x48); a.b(0x83); a.b(0xC2); a.b(0x08);     // add rdx, 8
+            a.b(0x48); a.b(0x8B); a.b(0x5D); a.b(0xE0);     // mov rbx, [rbp-32]
+            a.b(0x48); a.b(0x83); a.b(0xC3); a.b(0x08);     // add rbx, 8
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xF8);     // mov rax, [rbp-8]
+            a.b(0x48); a.b(0x8B); a.b(0x00);                // mov rax, [rax]
+            a.b(0x48); a.b(0x01); a.b(0xC3);                // add rbx, rax
+            a.b(0x4D); a.b(0x31); a.b(0xC0);                // xor r8, r8
+            a.label("cc2");
+            a.b(0x4C); a.b(0x39); a.b(0xC1);                // cmp r8, rcx
+            a.jgeShort("cc2e");
+            a.b(0x42); a.b(0x8A); a.b(0x04); a.b(0x02);     // mov al, [rdx+r8]
+            a.b(0x42); a.b(0x88); a.b(0x04); a.b(0x03);     // mov [rbx+r8], al
+            a.b(0x49); a.b(0xFF); a.b(0xC0);                // inc r8
+            a.jmpShort("cc2");
+            a.label("cc2e");
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xE0);     // mov rax, [rbp-32]
+            a.b(0xC9); a.b(0xC3);                           // leave; ret
+            a.finalize();
+        }
+
         void emitExitLinux(std::vector<uint8_t>& t, uint32_t rva) {
             MiniAsm a(t, rva);
             a.b(0x48); a.b(0x89); a.b(0xCF);       // mov rdi, rcx
@@ -1429,6 +1499,9 @@ namespace vcb {
         if (has("vayu_str_find"))
             emitAndMark("vayu_str_find", 48,
                 [&] { emitStrFind(text, textRva); });
+        if (has("vayu_str_concat"))
+            emitAndMark("vayu_str_concat", 64,
+                [&] { emitStrConcat(text, textRva, allocRva); });
         if (has("vayu_str_upper"))
             emitAndMark("vayu_str_upper", 48,
                 [&] { emitStrUpper(text, textRva, allocRva); });
@@ -1524,6 +1597,7 @@ namespace vcb {
             if (s == "vayu_print_map")  return { "vayu_print_int",
                                              "vayu_print_str",
                                              "vayu_print_char" };
+            if (s == "vayu_str_concat") return { "vayu_alloc" };
             if (s == "vayu_str_upper")  return { "vayu_alloc" };
             if (s == "vayu_str_lower")  return { "vayu_alloc" };
             (void)s;
@@ -1564,6 +1638,7 @@ namespace vcb {
         if (has("vayu_str_ends_with")) { mark("vayu_str_ends_with");   emitStrEndsWith(text, textRva); }
         if (has("vayu_str_contains")) { mark("vayu_str_contains");    emitStrContains(text, textRva); }
         if (has("vayu_str_find")) { mark("vayu_str_find");        emitStrFind(text, textRva); }
+        if (has("vayu_str_concat")) { mark("vayu_str_concat");      emitStrConcat(text, textRva, allocRva); }
         if (has("vayu_str_upper")) { mark("vayu_str_upper");       emitStrUpper(text, textRva, allocRva); }
         if (has("vayu_str_lower")) { mark("vayu_str_lower");       emitStrLower(text, textRva, allocRva); }
         if (has("vayu_list_new")) { mark("vayu_list_new");        emitListNew(text, textRva, allocRva); }

@@ -225,7 +225,10 @@ namespace vcb {
 
         for (auto& sf : stringFixups) {
             uint32_t blobAbs = r.rdataRva + sf.blobOff;
-            int32_t  rel = (int32_t)blobAbs - (int32_t)(sf.pos + 4);
+            // RIP at the end of a 7-byte LEA is textRva + sf.pos + 4.
+            // The disp32 is blobAbs - RIP_RVA.  Omitting textRva made
+            // every string pointer land 0x1000 bytes past the blob.
+            int32_t  rel = (int32_t)blobAbs - (int32_t)(textRva + sf.pos + 4);
             std::memcpy(&r.text[sf.pos], &rel, 4);
         }
 
