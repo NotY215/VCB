@@ -112,7 +112,7 @@ namespace vcb {
 
                     int wrc = writePeAtomic(output, image);
                     if (wrc != 0) return 1;
-                    std::printf("vcb: wrote %s (%zu bytes)\n",
+                    std::fprintf(stderr, "vcb: wrote %s (%zu bytes)\n",
                         output.c_str(), image.size());
                     return 0;
                 }
