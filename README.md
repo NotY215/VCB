@@ -81,60 +81,34 @@ The Phase 27 backend is complete through Parts 1–17. The WDAC structural fix i
 
 ---
 
-## Phase 27 Roadmap
+## Roadmap
 
-Phase 27 tracks native-backend correctness, runtime coverage, executable-format support, and cross-target validation.
-
-| Part | Status | Scope |
+| Phase / Item | Status | Scope |
 |---|---|---|
-| 1 | Done | ELF writer and Linux syscall runtime subset |
-| 2 | Done | Linux `brk` heap, list/map runtime, string methods |
-| 3 | Done | PE padding heuristic |
-| 4 | Done | `DYNAMIC_BASE` handling, dynamic sections, shadow space |
-| 5 | Done | Minimal `.reloc` support |
-| 6 | Done | ASLR re-enabled; `.pdata` / `.xdata` for user functions and entry stub |
-| 7 | Done | kernel32 heap APIs |
-| 8 | Done | Linux `vayu_print_float` |
-| 9 | Done | `.rdata` emission, padding, `RELOCS_STRIPPED` and ASLR handling |
-| 10 | Done | `vcb sign`, `vcb verify`, `vcb build --sign` |
-| 11 | Partial | WDAC supplemental policy generation; full policy acceptance depends on Microsoft-trusted signing or a machine without the inbox policy |
-| 12 | Done | Import-table construction remains in `X64.cpp`; runtime `.pdata` deferred to Part 15 |
-| 13 | Done | `X64Common.hpp` extracted; `X64.cpp` reduced to a thin wrapper |
-| 14 | Done | PE test matrix covering 11 programs; `t10` fixed |
-| 15 | Done | Runtime `.pdata` via `emitRuntime(..., &unwindEntries)`; `.xdata` built from all unwind entries |
-| 16 | Done | `tests\\elf_matrix.ps1` for repeatable Linux ELF validation |
-| 17 | Done | ELF/PE backend validation completed; Phase 28 moves to object emission and external linking |
+| 27 Parts 1-17 | done | ELF writer, Linux runtime, PE correctness, validator |
+| WDAC structural fix | done | `.rsrc`, rich header, 32 KB minimum image |
+| Signing | removed | Not needed once obj+linker path lands |
+| Tools | ready | `VCB\\tools\\`: `lld-link.exe`, `ld.lld.exe` (LLVM 22.1.3), `kernel32.lib`, LLVM inspection tools |
+| 28.0 | prep, one patch remaining | `run_all.ps1` line 214 last-line stderr |
+| — | waiting | Awaiting your next prompt |
+| 28.1 | queued | COFF `.obj` emitter + `vcb emit-obj` |
+| 28.2 | queued | ELF `.o` emitter |
+| 28.3 | queued | `vcb link` - `lld-link` / `ld.lld` dispatch |
+| 28.4 | queued | `vayuc --native` external-link default |
+| 28.5 | queued | VcbLower builtin guard |
+| 29 | queued | MAC policy templates |
+| 30 | queued | Small VcbLower additions |
+| 31 | queued | Tuples, sets, slicing |
+| 32 | queued | Classes, structs, inheritance |
+| 33 | queued | Lambdas, closures |
+| 34 | queued | Exceptions |
+| 35 | queued | Pointers, FFI |
+| 36 | queued | Modules and stdlib |
+| 37 | queued | `.text` size limit removal |
+| 38 | queued | Self-hosting on VCB IR |
+| 39 | queued | Full benchmark suite |
+| 40 | queued | Version cut |
 
-## Phase 28–40 Roadmap
-
-| Phase | Status | Scope |
-|---|---|---|
-| 28 | Next | Object emission + external link |
-| 28.1 | | COFF `.obj` emitter on Windows: sections, symbols, relocations, no headers |
-| 28.2 | | ELF `.o` emitter on Linux: `.rela.text`, `.symtab`, `.strtab` |
-| 28.3 | | `vcb emit-obj <file.vcbir> -o out.obj` |
-| 28.4 | | `vcb link <file.obj> -o out.exe` wrapper for `link.exe`, `lld-link`, `gcc`, or `clang` |
-| 28.5 | | `vayuc --native --link=external`, default in `NativeCompiler`; retain `--link=embedded` |
-| 28.6 | | VcbLower builtin guard for unknown Vayu builtins |
-| 29 | Planned | MAC compliance helper: policy templates only, no bypass |
-| 29.1 | | WDAC supplemental policy template |
-| 29.2 | | SELinux type-enforcement module skeleton |
-| 29.3 | | AppArmor profile skeleton |
-| 29.4 | | IMA policy/signing-flow documentation helper |
-| 29.5 | | Documentation for each mechanism and its enforcement boundary |
-| 30 | Planned | Small VcbLower additions |
-| 30.1–30.10 | | Unary operators, short-circuit logic, integer power, float operators, iteration, assignment targets, string methods, collection methods, generic `len/str`, `range(a,b,c)` |
-| 31 | Planned | Tuples, sets, slicing |
-| 32 | Planned | Classes, structs, inheritance |
-| 33 | Planned | Lambdas, closures |
-| 34 | Planned | Exceptions |
-| 35 | Planned | Pointers, FFI, `malloc` / `free` |
-| 36 | Planned | Modules and stdlib (`os`, `py`, `gui`, `raster`) |
-| 37 | Planned | `.text` size limit removal |
-| 38 | Planned | Self-hosting on VCB IR; fixpoint re-enabled in harness |
-| 39 | Planned | Full benchmark suite: Vayu tree-walk / VM / native vs C++ / Python / Java |
-| 40 | Planned | Version cut |
----
 ## Why I Am Making VCB
 
 VCB exists to give Vayu its own native backend instead of depending on a large external compiler backend.
