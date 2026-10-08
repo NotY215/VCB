@@ -291,3 +291,14 @@ VCB is released under the **Apache License 2.0**.
 **[vayu.gt.tc/VCB](https://vayu.gt.tc/VCB)**
 
 </div>
+
+
+## Project policies
+
+- [Contributing](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security](SECURITY.md)
+- [Support](SUPPORT.md)
+- [Citation](CITATION.cff)
+- [Governance](GOVERNANCE.md)
+- [License](LICENSE)
