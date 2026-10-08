@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+title: "VCB"
+message: "If you use VCB, please cite this repository."
+type: software
+authors:
+  - given-names: Shreyas
+    family-names: Mishra
+    affiliation: NotY215
+repository-code: "https://github.com/NotY215/VCB"
+url: "https://vayu.gt.tc/VCB"
+license: "Apache-2.0"
+version: "0.5.3"
