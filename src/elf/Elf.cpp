@@ -79,7 +79,13 @@ namespace vcb {
         const uint32_t textVaddr = (uint32_t)(BASE + PAGE);
 
         const uint32_t textSize = (uint32_t)text.size();
-        const uint32_t textPadded = alignUp(textSize, 16);
+        // Pad .text to at least one page so .rodata lands at file
+        // offset 0x2000.  The identity PT_LOAD mapping
+        // (fileOffset - p_offset == vaddr - p_vaddr) then places
+        // .rodata at vaddr BASE + 0x2000, matching the rdataRva that
+        // codegenX64Elf assumes.
+        uint32_t textPadded = alignUp(textSize, PAGE);
+        if (textPadded < PAGE) textPadded = PAGE;
         const uint32_t rodataFileOff = textFileOff + textPadded;
         const uint32_t rodataVaddr = textVaddr + textPadded;
         const uint32_t rodataSize = (uint32_t)rodata.size();

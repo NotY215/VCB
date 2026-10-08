@@ -20,8 +20,27 @@ namespace vcb {
             R12 = 12, R13 = 13, R14 = 14, R15 = 15
         };
 
+        // PE/COFF relocation type codes.  Same numeric values in both
+        // containers.
+        enum class RelocType : uint16_t {
+            Addr32NB = 0x0003,
+            Rel32    = 0x0004,
+        };
+
+        // A deferred external reference.  In object-file mode the
+        // emitter records one of these instead of patching an absolute
+        // RVA into the instruction stream.
+        struct Reloc {
+            uint32_t    offset;      // byte offset within the section
+            std::string symbol;
+            RelocType   type;
+        };
+
         struct Asm {
             std::vector<uint8_t>& c;
+            // Non-null => object-file mode.  External references are
+            // recorded as relocations instead of being resolved.
+            std::vector<Reloc>*   outRelocs = nullptr;
             explicit Asm(std::vector<uint8_t>& v) : c(v) {}
 
             void b(uint8_t x) { c.push_back(x); }
@@ -198,6 +217,27 @@ namespace vcb {
             void jnzRel32Placeholder() { b(0x0F); b(0x85); b32(0); }
             void callRel32Placeholder() { b(0xE8); b32(0); }
             void callIndirectRip() { b(0xFF); b(0x15); b32(0); }
+
+            // Object-file emission: reference an external symbol by
+            // name.  When `outRelocs` is set, a REL32 relocation is
+            // recorded.  When it is null, the caller is responsible
+            // for patching the placeholder afterwards.
+            void callIndirectRipSym(const std::string& symbol) {
+                b(0xFF); b(0x15);
+                uint32_t dispOff = (uint32_t)c.size();
+                b32(0);
+                if (outRelocs)
+                    outRelocs->push_back(
+                        { dispOff, symbol, RelocType::Rel32 });
+            }
+            void callRel32Sym(const std::string& symbol) {
+                b(0xE8);
+                uint32_t dispOff = (uint32_t)c.size();
+                b32(0);
+                if (outRelocs)
+                    outRelocs->push_back(
+                        { dispOff, symbol, RelocType::Rel32 });
+            }
             void ret() { b(0xC3); }
             void leave() { b(0xC9); }
             void pushRbp() { b(0x55); }
@@ -261,16 +301,34 @@ namespace vcb {
         struct StringTable {
             std::vector<uint8_t>                      blob;
             std::unordered_map<std::string, uint32_t> offset;
+            // Object-file mode: one symbol per unique string.  Names are
+            // deterministic (insertion order), so the object file is
+            // byte-for-byte reproducible.
+            std::vector<std::string>                  symbolNames;
+            std::vector<uint32_t>                     symbolOffsets;
+            std::unordered_map<uint32_t, uint32_t>    offToIdx;
 
             uint32_t intern(const std::string& s) {
                 auto it = offset.find(s);
                 if (it != offset.end()) return it->second;
                 uint32_t off = (uint32_t)blob.size();
                 offset[s] = off;
+                offToIdx[off] = (uint32_t)symbolNames.size();
+                symbolNames.push_back(
+                    "__vayu_s" + std::to_string(symbolNames.size()));
+                symbolOffsets.push_back(off);
                 uint64_t n = (uint64_t)s.size();
                 for (int i = 0; i < 8; ++i) blob.push_back((uint8_t)(n >> (i * 8)));
                 blob.insert(blob.end(), s.begin(), s.end());
                 return off;
+            }
+
+            const std::string& symbolFor(uint32_t off) const {
+                auto it = offToIdx.find(off);
+                if (it == offToIdx.end())
+                    throw std::runtime_error(
+                        "StringTable::symbolFor: unknown offset");
+                return symbolNames[it->second];
             }
         };
 
@@ -280,10 +338,12 @@ namespace vcb {
                 const Frame& frame,
                 std::vector<CallFixup>& callFixups,
                 StringTable& strings,
-                std::vector<StringFixup>& stringFixups)
+                std::vector<StringFixup>& stringFixups,
+                std::vector<Reloc>* outRelocs = nullptr)
                 : text_(text), fn_(fn), frame_(frame),
                 callFixups_(callFixups), a_(text),
-                strings_(strings), stringFixups_(stringFixups) {
+                strings_(strings), stringFixups_(stringFixups),
+                outRelocs_(outRelocs) {
                 for (auto& blk : fn_.blocks)
                     for (auto& op : blk.ops)
                         if (op.kind == OpKind::Phi)
@@ -327,6 +387,7 @@ namespace vcb {
             Asm                                                     a_;
             StringTable& strings_;
             std::vector<StringFixup>& stringFixups_;
+            std::vector<Reloc>*     outRelocs_ = nullptr;
             std::unordered_map<std::string, std::vector<const Op*>> phisByBlock_;
             std::unordered_map<std::string, uint32_t>               blockOffsets_;
             std::vector<BlockFixup>                                 blockFixups_;
@@ -375,9 +436,18 @@ namespace vcb {
                 }
                 case OpKind::ConstStr: {
                     uint32_t blobOff = strings_.intern(op.strVal);
-                    uint32_t fixPos = (uint32_t)text_.size() + 3;
-                    a_.b(0x48); a_.b(0x8D); a_.b(0x05); a_.b32(0);
-                    stringFixups_.push_back({ fixPos, blobOff });
+                    a_.b(0x48); a_.b(0x8D); a_.b(0x05);
+                    if (outRelocs_) {
+                        uint32_t dispOff = (uint32_t)text_.size();
+                        a_.b32(0);
+                        outRelocs_->push_back({ dispOff,
+                            strings_.symbolFor(blobOff),
+                            RelocType::Rel32 });
+                    } else {
+                        uint32_t fixPos = (uint32_t)text_.size() + 3;
+                        a_.b32(0);
+                        stringFixups_.push_back({ fixPos, blobOff });
+                    }
                     store(op.dst, RAX);
                     break;
                 }

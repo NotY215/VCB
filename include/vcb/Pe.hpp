@@ -30,7 +30,7 @@ namespace vcb {
         // emit a minimal .reloc section.  The generated image is fully
         // position-independent (all references are RIP-relative or
         // section-relative RVAs), so the .reloc contains zero
-        // relocation entries — but its presence, combined with
+        // relocation entries -- but its presence, combined with
         // DYNAMIC_BASE and clearing IMAGE_FILE_RELOCS_STRIPPED, is a
         // coherent, loader-accepted configuration.
         bool enableAslr = false;

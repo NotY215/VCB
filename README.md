@@ -1,4 +1,4 @@
-# VCB — Vayu Compiler Backend
+# VCB -- Vayu Compiler Backend
 
 <div align="center">
 
@@ -56,7 +56,7 @@ VCB does not parse `.vyu⟧ directly. The Vayu compiler produces VCBIR and VCB c
 
 ## Current Status
 
-**VCB 0.5.3 — Phase 27 Parts 1–17 done; object + external-link path next**
+**VCB 0.5.3 -- Phase 27 Parts 1–17 done; object + external-link path next**
 
 The current backend provides:
 
@@ -90,7 +90,7 @@ The Phase 27 backend is complete through Parts 1–17. The WDAC structural fix i
 | Signing | removed | Not needed once obj+linker path lands |
 | Tools | ready | `VCB\\tools\\`: `lld-link.exe`, `ld.lld.exe` (LLVM 22.1.3), `kernel32.lib`, LLVM inspection tools |
 | 28.0 | prep, one patch remaining | `run_all.ps1` line 214 last-line stderr |
-| — | waiting | Awaiting your next prompt |
+| -- | waiting | Awaiting your next prompt |
 | 28.1 | queued | COFF `.obj` emitter + `vcb emit-obj` |
 | 28.2 | queued | ELF `.o` emitter |
 | 28.3 | queued | `vcb link` - `lld-link` / `ld.lld` dispatch |
@@ -269,10 +269,10 @@ The old **QBE → assembly → GCC** backend chain is no longer the native backe
 
 ## What VCB Is Not
 
-- **Not a frontend** — Vayu handles `.vyu⟧ source.
-- **Not a generic backend** — VCB is built for Vayu.
-- **Not LLVM/GCC** — its scope is intentionally much smaller.
-- **Not another language** — VCBIR is an internal compiler representation.
+- **Not a frontend** -- Vayu handles `.vyu⟧ source.
+- **Not a generic backend** -- VCB is built for Vayu.
+- **Not LLVM/GCC** -- its scope is intentionally much smaller.
+- **Not another language** -- VCBIR is an internal compiler representation.
 
 ---
 

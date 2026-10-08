@@ -24,6 +24,8 @@ add_executable(vcb
     src/pe/Pe.cpp
     src/pe/Resources.cpp
     src/elf/Elf.cpp
+    src/obj/Coff.cpp
+    src/obj/ElfObj.cpp
     src/driver/Driver.cpp
 )
 

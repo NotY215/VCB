@@ -1,11 +1,13 @@
 #include "vcb/X64.hpp"
 #include "vcb/Runtime.hpp"
 #include "vcb/X64Common.hpp"
+#include "vcb/Obj.hpp"
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace vcb {
@@ -336,6 +338,165 @@ namespace vcb {
         }
 
         return r;
+    }
+
+    // -------------------------------------------------------------------
+    // Phase 28.1 -- COFF object emission.
+    // -------------------------------------------------------------------
+    CoffFile codegenX64Coff(const Module& m) {
+        CoffFile cf;
+
+        CoffSection text;
+        text.name = ".text";
+        text.characteristics = 0x60000020;  // CODE | EXECUTE | READ
+
+        CoffSection rdata;
+        rdata.name = ".rdata";
+        rdata.characteristics = 0x40000040;  // INITIALIZED_DATA | READ
+
+        // Opaque keys for the iatNameMap.  Values are never used as
+        // addresses in obj mode; the linker picks the real RVAs from
+        // kernel32.lib.
+        RuntimeImports ri;
+        ri.iatExitProcess    = 0x1000;
+        ri.iatGetStdHandle   = 0x1008;
+        ri.iatWriteFile      = 0x1010;
+        ri.iatGetProcessHeap = 0x1018;
+        ri.iatHeapAlloc      = 0x1020;
+        ri.iatHeapReAlloc    = 0x1028;
+
+        std::unordered_map<uint32_t, std::string> iatNames;
+        iatNames[ri.iatExitProcess]    = "__imp_ExitProcess";
+        iatNames[ri.iatGetStdHandle]   = "__imp_GetStdHandle";
+        iatNames[ri.iatWriteFile]      = "__imp_WriteFile";
+        iatNames[ri.iatGetProcessHeap] = "__imp_GetProcessHeap";
+        iatNames[ri.iatHeapAlloc]      = "__imp_HeapAlloc";
+        iatNames[ri.iatHeapReAlloc]    = "__imp_HeapReAlloc";
+
+        std::vector<Reloc> textRelocs;
+        ri.relocs      = &textRelocs;
+        ri.iatNameMap  = &iatNames;
+
+        // textRva = 0 makes every callText() inside the runtime a
+        // section-local relative displacement, which is exactly what
+        // COFF wants.  No relocations are needed for those.
+        auto symbolOffsets = emitRuntime(text.data, 0, ri, m, nullptr);
+
+        std::vector<CallFixup>   callFixups;
+        std::vector<StringFixup> stringFixups;   // unused in obj mode
+        StringTable              strings;
+        std::unordered_map<std::string, Frame> frames;
+
+        for (auto& fn : m.functions) {
+            if (symbolOffsets.count(fn.name))
+                throw std::runtime_error(
+                    "codegen: function '" + fn.name +
+                    "' conflicts with a runtime symbol");
+            frames[fn.name] = layoutFunction(fn);
+        }
+
+        for (auto& fn : m.functions) {
+            symbolOffsets[fn.name] = (uint32_t)text.data.size();
+            FunctionEmitter fe(text.data, fn, frames[fn.name],
+                callFixups, strings, stringFixups, &textRelocs);
+            fe.run();
+        }
+
+        if (!symbolOffsets.count("main"))
+            throw std::runtime_error(
+                "codegen: no 'main' function defined; cannot build an executable");
+
+        // Entry stub.  Same shape as codegenX64Pe, but the final call
+        // goes through __imp_ExitProcess.
+        uint32_t entryOffset = (uint32_t)text.data.size();
+        {
+            Asm a(text.data);
+            a.outRelocs = &textRelocs;
+            a.subRspImm32(40);
+            uint32_t callPos = (uint32_t)text.data.size() + 1;
+            a.callRel32Placeholder();
+            callFixups.push_back({ callPos, "main" });
+            a.mov32RegReg(RCX, RAX);
+            a.callIndirectRipSym("__imp_ExitProcess");
+            a.int3();
+        }
+        symbolOffsets["vayu_entry"] = entryOffset;
+
+        // Section-local patch of every call to another .text function.
+        for (auto& cfix : callFixups) {
+            auto it = symbolOffsets.find(cfix.target);
+            if (it == symbolOffsets.end())
+                throw std::runtime_error(
+                    "codegen: undefined function '" + cfix.target + "'");
+            int32_t rel = (int32_t)it->second - (int32_t)(cfix.pos + 4);
+            std::memcpy(&text.data[cfix.pos], &rel, 4);
+        }
+
+        // String blob -> .rdata; one STATIC symbol per unique string.
+        rdata.data = strings.blob;
+        for (size_t i = 0; i < strings.symbolNames.size(); ++i) {
+            CoffSymbol s;
+            s.name = strings.symbolNames[i];
+            s.section = 2;                       // .rdata
+            s.value = strings.symbolOffsets[i];
+            s.storageClass = 3;                  // STATIC
+            s.type = 0;
+            cf.symbols.push_back(std::move(s));
+        }
+
+        // Every string LEA becomes a REL32 relocation against the
+        // corresponding .rdata symbol.  In obj mode `stringFixups` is
+        // empty, so this loop is a no-op; keeping it makes the intent
+        // explicit and future-proofs a mode that emits both.
+        for (auto& sf : stringFixups) {
+            textRelocs.push_back({ sf.pos,
+                strings.symbolFor(sf.blobOff),
+                RelocType::Rel32 });
+        }
+
+        // External function symbols.  Sorted so the object file is
+        // byte-for-byte reproducible.
+        {
+            std::vector<std::pair<std::string, uint32_t>> ordered(
+                symbolOffsets.begin(), symbolOffsets.end());
+            std::sort(ordered.begin(), ordered.end(),
+                [](const std::pair<std::string, uint32_t>& a,
+                   const std::pair<std::string, uint32_t>& b) {
+                    return a.first < b.first;
+                });
+            for (auto& kv : ordered) {
+                CoffSymbol s;
+                s.name = kv.first;
+                s.section = 1;                   // .text
+                s.value = kv.second;
+                s.storageClass = 2;              // EXTERNAL
+                s.type = 0x20;                   // DTYPE_FUNCTION
+                cf.symbols.push_back(std::move(s));
+            }
+        }
+
+        // Every relocation target that is not defined here gets an
+        // UNDEFINED symbol so writeCoff() can produce a symbol index.
+        {
+            std::unordered_set<std::string> defined;
+            for (auto& s : cf.symbols) defined.insert(s.name);
+            for (auto& r : textRelocs) {
+                if (defined.count(r.symbol)) continue;
+                defined.insert(r.symbol);
+                CoffSymbol u;
+                u.name = r.symbol;
+                u.section = 0;                   // undefined
+                u.value = 0;
+                u.storageClass = 2;              // EXTERNAL
+                u.type = 0;
+                cf.symbols.push_back(std::move(u));
+            }
+        }
+
+        text.relocs = std::move(textRelocs);
+        cf.sections.push_back(std::move(text));
+        cf.sections.push_back(std::move(rdata));
+        return cf;
     }
 
 } // namespace vcb

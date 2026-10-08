@@ -5,6 +5,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace vcb { namespace x64common { struct Reloc; } }
+
 namespace vcb {
 
     struct RuntimeImports {
@@ -16,6 +18,13 @@ namespace vcb {
         uint32_t iatGetProcessHeap = 0;
         uint32_t iatHeapAlloc = 0;
         uint32_t iatHeapReAlloc = 0;
+
+        // Phase 28.1 -- object-file mode.  When both are non-null,
+        // MiniAsm::callIat() emits a REL32 relocation against the
+        // symbol name found at the given IAT key instead of patching an
+        // absolute IAT RVA.  The iat* fields above become opaque keys.
+        std::vector<x64common::Reloc>*             relocs = nullptr;
+        std::unordered_map<uint32_t, std::string>* iatNameMap = nullptr;
     };
 
     // `outUnwinds` receives one UnwindEntry per runtime function with a

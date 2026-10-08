@@ -1,5 +1,6 @@
 #include "vcb/Runtime.hpp"
 #include "vcb/X64.hpp"
+#include "vcb/X64Common.hpp"
 #include <cstring>
 #include <stdexcept>
 #include <unordered_set>
@@ -14,8 +15,18 @@ namespace vcb {
             std::vector<std::pair<size_t, std::string>> shortJumps;
             std::unordered_map<std::string, size_t>     labels;
 
+            // Phase 28.1 -- object-file mode.  Non-null when the caller
+            // wants external references captured as relocations.
+            std::vector<x64common::Reloc>* relocs = nullptr;
+            const std::unordered_map<uint32_t, std::string>* iatNameMap = nullptr;
+
             MiniAsm(std::vector<uint8_t>& t, uint32_t rva)
                 : body(t), textRva(rva) {
+            }
+            MiniAsm(std::vector<uint8_t>& t, uint32_t rva,
+                    const RuntimeImports& im)
+                : body(t), textRva(rva),
+                  relocs(im.relocs), iatNameMap(im.iatNameMap) {
             }
 
             void b(uint8_t x) { body.push_back(x); }
@@ -68,6 +79,18 @@ namespace vcb {
             }
 
             void callIat(uint32_t iatRva) {
+                if (relocs && iatNameMap) {
+                    auto it = iatNameMap->find(iatRva);
+                    if (it != iatNameMap->end()) {
+                        body.push_back(0xFF);
+                        body.push_back(0x15);
+                        uint32_t dispOff = (uint32_t)body.size();
+                        b32(0);
+                        relocs->push_back({ dispOff, it->second,
+                            x64common::RelocType::Rel32 });
+                        return;
+                    }
+                }
                 uint32_t here = textRva + (uint32_t)body.size();
                 body.push_back(0xFF);
                 body.push_back(0x15);
@@ -98,7 +121,7 @@ namespace vcb {
         // ---- Windows primitives ------------------------------------------
 
         void emitExit(std::vector<uint8_t>& t, uint32_t rva, const RuntimeImports& im) {
-            MiniAsm a(t, rva);
+            MiniAsm a(t, rva, im);
             a.b(0x55);                                      // push rbp
             a.b(0x48); a.b(0x89); a.b(0xE5);               // mov rbp, rsp
             a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x20);    // sub rsp, 32 (shadow space)
@@ -108,7 +131,7 @@ namespace vcb {
         }
 
         void emitPrintChar(std::vector<uint8_t>& t, uint32_t rva, const RuntimeImports& im) {
-            MiniAsm a(t, rva);
+            MiniAsm a(t, rva, im);
             a.b(0x55); a.b(0x48); a.b(0x89); a.b(0xE5);
             a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x40);
             a.b(0x88); a.b(0x4D); a.b(0xF8);
@@ -125,7 +148,7 @@ namespace vcb {
         }
 
         void emitPrintLn(std::vector<uint8_t>& t, uint32_t rva, const RuntimeImports& im) {
-            MiniAsm a(t, rva);
+            MiniAsm a(t, rva, im);
             a.b(0x55); a.b(0x48); a.b(0x89); a.b(0xE5);
             a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x40);
             a.b(0xC6); a.b(0x45); a.b(0xF8); a.b(0x0A);
@@ -142,7 +165,7 @@ namespace vcb {
         }
 
         void emitPrintSpace(std::vector<uint8_t>& t, uint32_t rva, const RuntimeImports& im) {
-            MiniAsm a(t, rva);
+            MiniAsm a(t, rva, im);
             a.b(0x55); a.b(0x48); a.b(0x89); a.b(0xE5);
             a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x40);
             a.b(0xC6); a.b(0x45); a.b(0xF8); a.b(0x20);
@@ -159,7 +182,7 @@ namespace vcb {
         }
 
         void emitPrintBool(std::vector<uint8_t>& t, uint32_t rva, const RuntimeImports& im) {
-            MiniAsm a(t, rva);
+            MiniAsm a(t, rva, im);
             a.b(0x55); a.b(0x48); a.b(0x89); a.b(0xE5);
             a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x40);
             a.b(0x48); a.b(0x85); a.b(0xC9);
@@ -185,7 +208,7 @@ namespace vcb {
         }
 
         void emitPrintStr(std::vector<uint8_t>& t, uint32_t rva, const RuntimeImports& im) {
-            MiniAsm a(t, rva);
+            MiniAsm a(t, rva, im);
             a.b(0x55); a.b(0x48); a.b(0x89); a.b(0xE5);
             a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x40);
             a.b(0x48); a.b(0x89); a.b(0xCA);
@@ -206,7 +229,7 @@ namespace vcb {
         }
 
         void emitPrintInt(std::vector<uint8_t>& t, uint32_t rva, const RuntimeImports& im) {
-            MiniAsm a(t, rva);
+            MiniAsm a(t, rva, im);
             a.b(0x55); a.b(0x48); a.b(0x89); a.b(0xE5);
             a.b(0x48); a.b(0x81); a.b(0xEC); a.b32(128);
             a.b(0x48); a.b(0x89); a.b(0x4D); a.b(0xF8);
@@ -255,7 +278,7 @@ namespace vcb {
         }
 
         void emitPrintFloat(std::vector<uint8_t>& t, uint32_t rva, const RuntimeImports& im) {
-            MiniAsm a(t, rva);
+            MiniAsm a(t, rva, im);
             a.b(0x55); a.b(0x48); a.b(0x89); a.b(0xE5);
             a.b(0x48); a.b(0x81); a.b(0xEC); a.b32(512);
             a.b(0x48); a.b(0x89); a.b(0x4D); a.b(0xF8);
@@ -357,11 +380,11 @@ namespace vcb {
             a.finalize();
         }
 
-        // vayu_alloc(n) — HeapAlloc(GetProcessHeap(), 0, n).
+        // vayu_alloc(n) -- HeapAlloc(GetProcessHeap(), 0, n).
         //   Input:  RCX = n
         //   Output: RAX = pointer, or process exit(1) on failure.
         void emitAlloc(std::vector<uint8_t>& t, uint32_t rva, const RuntimeImports& im) {
-            MiniAsm a(t, rva);
+            MiniAsm a(t, rva, im);
             a.b(0x55);                                    // push rbp
             a.b(0x48); a.b(0x89); a.b(0xE5);              // mov rbp, rsp
             a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x30);   // sub rsp, 48 (32 shadow + 16 locals)
@@ -662,7 +685,7 @@ namespace vcb {
             a.finalize();
         }
 
-        // vayu_list_push(list, value) — portable (no CRT dependency).
+        // vayu_list_push(list, value) -- portable (no CRT dependency).
 //   list  = [0]=len [8]=cap [16]=data
 //   value = i64
 // Growth path: alloc(new_cap*8) + byte-copy old data + overwrite
@@ -810,7 +833,7 @@ namespace vcb {
             a.finalize();
         }
 
-        // vayu_map_put(map, key, value) — portable (no CRT dependency).
+        // vayu_map_put(map, key, value) -- portable (no CRT dependency).
 //   map   = [0]=len [8]=cap [16]=entries (16-byte {key, value})
 //   key   = VayuStr*
 //   value = i64
@@ -1037,7 +1060,7 @@ namespace vcb {
         //   sys_exit   = 60  (rdi=code)
         // Internal calling convention is unchanged (first arg in RCX).
 
-        // vayu_print_float(bits) — same algorithm as the Windows version,
+        // vayu_print_float(bits) -- same algorithm as the Windows version,
         // write path replaced with sys_write.  Buffer at [rbp-0x40] going
         // down; final (rsi, rdx) pair comes from r10 and the length
         // computed after trailing-zero trimming.
@@ -1355,7 +1378,7 @@ namespace vcb {
             a.finalize();
         }
 
-        // vayu_alloc(n) — Linux bump allocator over brk(2).
+        // vayu_alloc(n) -- Linux bump allocator over brk(2).
         //   Input:  RCX = n (bytes)
         //   Output: RAX = pointer to n bytes
         // On brk failure, exits with status 1 via sys_exit (no libc).
@@ -1561,7 +1584,7 @@ namespace vcb {
         return syms;
     }
     // =========================================================================
-    // emitRuntimeLinux — Part 2: heap + collections + string methods.
+    // emitRuntimeLinux -- Part 2: heap + collections + string methods.
     // vayu_print_float is still not implemented on Linux; a module that
     // calls it will fail the call-fixup stage with an "undefined
     // function" error rather than producing silently wrong output.
@@ -1580,7 +1603,7 @@ namespace vcb {
     // =========================================================================
 
         // =========================================================================
-    // emitRuntimeLinux — full Linux runtime: heap (brk bump), strings,
+    // emitRuntimeLinux -- full Linux runtime: heap (brk bump), strings,
     // lists, maps, print variants.  No CRT, no IATs.
     // =========================================================================
 

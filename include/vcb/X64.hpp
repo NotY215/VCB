@@ -1,5 +1,6 @@
 #pragma once
 #include "vcb/Ir.hpp"
+#include "vcb/Obj.hpp"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -7,9 +8,9 @@
 namespace vcb {
 
     // One entry per function that needs a .pdata RUNTIME_FUNCTION.
-    //   funcOffset   — offset of function within .text (bytes)
-    //   funcSize     — size of function (bytes)
-    //   unwindOffset — offset of UNWIND_INFO record within .xdata
+    //   funcOffset   -- offset of function within .text (bytes)
+    //   funcSize     -- size of function (bytes)
+    //   unwindOffset -- offset of UNWIND_INFO record within .xdata
     struct UnwindEntry {
         uint32_t funcOffset = 0;
         uint32_t funcSize = 0;
@@ -24,7 +25,7 @@ namespace vcb {
 
     // One DLL and the functions imported from it.  Consumed by
     // writePe() in Pe.cpp (Part 12).  If your X64.cpp still contains
-    // buildImports(), leave this struct in place — it is harmless.
+    // buildImports(), leave this struct in place -- it is harmless.
     struct ImportDll {
         std::string dll;
         std::vector<std::string> funcs;
@@ -57,5 +58,13 @@ namespace vcb {
 
     CodegenResult codegenX64Pe(const Module& m);
     CodegenResult codegenX64Elf(const Module& m);
+
+    // Phase 28.1 -- COFF object emission.  Same code paths as
+    // codegenX64Pe, but external references (IAT calls and string LEAs)
+    // become relocations instead of absolute RVAs.
+    CoffFile codegenX64Coff(const Module& m);
+
+    // Phase 28.2 -- ELF64 REL object emission.
+    ElfFile codegenX64ElfObj(const Module& m);
 
 } // namespace vcb
