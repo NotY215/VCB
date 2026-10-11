@@ -77,9 +77,12 @@ foreach ($t in $tests) {
         continue
     }
 
+    # Normalise CRLF to LF, but do NOT trim trailing newlines: the
+    # expected strings encode them explicitly.  Trimming would make
+    # t04_print_str ("hello, vayu\n") compare unequal to a trimmed
+    # "hello, vayu".
     $actual = & $exe 2>&1 | Out-String
     $actual = $actual -replace "`r`n", "`n"
-    $actual = $actual.TrimEnd("`n")
     $want = $t.out
 
     if ($actual -eq $want) {

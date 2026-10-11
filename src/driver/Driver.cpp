@@ -248,6 +248,18 @@ namespace vcb {
             if (!parent.empty())
                 std::filesystem::create_directories(parent, ec);
 
+            // cmd.exe /c strips the first and last quote when the
+            // command line starts with a quote AND contains more than
+            // two quotes (handoff pitfall #7).  Two fixes:
+            //   - if the linker path has no spaces, do not quote it;
+            //   - if it does, prefix the whole thing with `call `.
+            // Both keep the command line from starting with a quote.
+            auto shellQuote = [](const std::string& s) -> std::string {
+                return (s.find(' ') == std::string::npos)
+                    ? s
+                    : ("call \"" + s + "\"");
+                };
+
             std::string cmd;
             if (target == "pe") {
                 std::string lld = findLinker("lld-link.exe");
@@ -258,7 +270,7 @@ namespace vcb {
                     return 1;
                 }
                 std::string e = entry.empty() ? "vayu_entry" : entry;
-                cmd = "\"" + lld + "\" \"" + input + "\""
+                cmd = shellQuote(lld) + " \"" + input + "\""
                     + " /entry:" + e
                     + " /subsystem:console"
                     + " /out:\"" + output + "\"";
@@ -273,11 +285,13 @@ namespace vcb {
                     return 1;
                 }
                 std::string e = entry.empty() ? "vayu_entry" : entry;
-                cmd = "\"" + lld + "\" -o \"" + output + "\""
+                // -e sets the entry symbol.  The object has no external
+                // dependencies, so no other flags are required.  Do NOT
+                // pass --no-dynamic-linker: that is a GNU ld option and
+                // ld.lld rejects it with exit code 1.
+                cmd = shellQuote(lld) + " -o \"" + output + "\""
                     + " \"" + input + "\""
-                    + " -e " + e
-                    + " --no-dynamic-linker"
-                    + " -static";
+                    + " -e " + e;
             }
             else {
                 std::fprintf(stderr,

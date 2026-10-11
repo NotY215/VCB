@@ -42,9 +42,12 @@ foreach ($name in $tests) {
         continue
     }
 
-    & $vcb link $obj -o $elf --target elf --entry vayu_entry *> $null
+    # Do NOT suppress stderr: if ld.lld rejects the object, we want its
+    # diagnostics printed verbatim.
+    $linkOut = & $vcb link $obj -o $elf --target elf --entry vayu_entry 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $elf)) {
         Write-Host ("FAIL  {0}  link exit={1}" -f $name, $LASTEXITCODE) -ForegroundColor Red
+        Write-Host $linkOut
         $fail++
         continue
     }
