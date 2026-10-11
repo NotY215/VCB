@@ -1055,10 +1055,32 @@ namespace vcb {
             a.finalize();
         }
 
+        // Phase 30 -- vayu_pow_int(base, exp).  Binary exponentiation,
+        // exp must be non-negative.  Leaf function: no frame.
+        void emitPowInt(std::vector<uint8_t>& t, uint32_t rva) {
+            MiniAsm a(t, rva);
+            a.b(0xB8); a.b(0x01); a.b(0x00); a.b(0x00); a.b(0x00); // mov eax, 1
+            a.label("loop");
+            a.b(0x48); a.b(0x85); a.b(0xD2);                     // test rdx, rdx
+            a.jzShort("done");
+            a.b(0xF6); a.b(0xC2); a.b(0x01);                     // test dl, 1
+            a.jzShort("skip");
+            a.b(0x48); a.b(0x0F); a.b(0xAF); a.b(0xC1);          // imul rax, rcx
+            a.label("skip");
+            a.b(0x48); a.b(0x0F); a.b(0xAF); a.b(0xC9);          // imul rcx, rcx
+            a.b(0x48); a.b(0xD1); a.b(0xEA);                     // shr rdx, 1
+            a.jmpShort("loop");
+            a.label("done");
+            a.b(0xC3);                                            // ret
+            a.finalize();
+        }
+
         // ---- Linux x86-64 syscall runtime --------------------------------
         //   sys_write  = 1   (rdi=fd, rsi=buf, rdx=count)
         //   sys_exit   = 60  (rdi=code)
         // Internal calling convention is unchanged (first arg in RCX).
+
+        // vayu_str_concat(a, b) -> new string.
 
         // vayu_print_float(bits) -- same algorithm as the Windows version,
         // write path replaced with sys_write.  Buffer at [rbp-0x40] going
@@ -1540,6 +1562,9 @@ namespace vcb {
         if (has("vayu_str_lower"))
             emitAndMark("vayu_str_lower", 48,
                 [&] { emitStrLower(text, textRva, allocRva); });
+        if (has("vayu_pow_int"))
+            emitAndMark("vayu_pow_int", 0,
+                [&] { emitPowInt(text, textRva); });
 
         if (has("vayu_list_new"))
             emitAndMark("vayu_list_new", 32,
@@ -1673,6 +1698,7 @@ namespace vcb {
         if (has("vayu_str_concat")) { mark("vayu_str_concat");      emitStrConcat(text, textRva, allocRva); }
         if (has("vayu_str_upper")) { mark("vayu_str_upper");       emitStrUpper(text, textRva, allocRva); }
         if (has("vayu_str_lower")) { mark("vayu_str_lower");       emitStrLower(text, textRva, allocRva); }
+        if (has("vayu_pow_int")) { mark("vayu_pow_int");         emitPowInt(text, textRva); }
         if (has("vayu_list_new")) { mark("vayu_list_new");        emitListNew(text, textRva, allocRva); }
         if (has("vayu_list_push")) { mark("vayu_list_push");       emitListPush(text, textRva, allocRva); }
         if (has("vayu_list_get")) { mark("vayu_list_get");        emitListGet(text, textRva); }

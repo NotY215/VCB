@@ -26,6 +26,7 @@ add_executable(vcb
     src/elf/Elf.cpp
     src/obj/Coff.cpp
     src/obj/ElfObj.cpp
+    src/policy/Policy.cpp
     src/driver/Driver.cpp
 )
 

@@ -5,6 +5,7 @@
 #include "vcb/Pe.hpp"
 #include "vcb/Elf.hpp"
 #include "vcb/Obj.hpp"
+#include "vcb/Policy.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,9 @@ namespace vcb {
                 "  vcb link    <in.obj> -o <out> [--target pe|elf]\n"
                 "                       [--entry <sym>] [--lib <path>]...\n"
                 "                                             invoke lld-link or ld.lld\n"
+                "  vcb policy  <type> [-o <dir>]              type = wdac |\n"
+                "                                             selinux | apparmor |\n"
+                "                                             ima | all\n"
                 "  vcb headers    <file.exe>                  dump a PE header\n"
                 "  vcb elfheaders <file.elf>                  dump an ELF header\n"
                 "\n"
@@ -322,6 +326,34 @@ namespace vcb {
                 return 2;
             }
             return dumpElfHeaders(argv[2]);
+        }
+
+        if (std::strcmp(cmd, "policy") == 0) {
+            if (argc < 3) {
+                std::fprintf(stderr,
+                    "vcb: policy requires a type "
+                    "(wdac|selinux|apparmor|ima|all)\n");
+                return 2;
+            }
+            std::string type = argv[2];
+            std::string dir;
+            for (int i = 3; i < argc; ++i) {
+                std::string a = argv[i];
+                if (a == "-o") {
+                    if (i + 1 >= argc) {
+                        std::fprintf(stderr,
+                            "vcb: -o requires a path\n");
+                        return 2;
+                    }
+                    dir = argv[++i];
+                }
+                else {
+                    std::fprintf(stderr,
+                        "vcb: unexpected argument '%s'\n", a.c_str());
+                    return 2;
+                }
+            }
+            return runPolicy(type, dir);
         }
 
         if (std::strcmp(cmd, "link") == 0) {
