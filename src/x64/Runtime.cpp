@@ -834,6 +834,168 @@ namespace vcb {
             a.finalize();
         }
 
+        // Phase 31.3 -- vayu_list_pop(lst): decrement len, return
+        // last element.  Returns 0 on empty (caller must check len
+        // before calling if empty is a runtime error).
+        void emitListPop(std::vector<uint8_t>& t, uint32_t rva) {
+            MiniAsm a(t, rva);
+            a.b(0x48); a.b(0x8B); a.b(0x01);          // rax = len
+            a.b(0x48); a.b(0x85); a.b(0xC0);          // test rax, rax
+            a.jzShort("empty");
+            a.b(0x48); a.b(0x83); a.b(0xE8); a.b(0x01);// dec rax
+            a.b(0x48); a.b(0x89); a.b(0x01);          // [rcx] = new len
+            a.b(0x48); a.b(0x8B); a.b(0x49); a.b(0x10);// rcx = data
+            a.b(0x48); a.b(0x8B); a.b(0x04); a.b(0xC1);// rax = data[old_len-1]
+            a.b(0xC3);
+            a.label("empty");
+            a.b(0x31); a.b(0xC0);                       // xor eax, eax
+            a.b(0xC3);
+            a.finalize();
+        }
+
+        // Phase 31.3 -- vayu_list_contains(lst, v) -> bool.
+        void emitListContains(std::vector<uint8_t>& t, uint32_t rva) {
+            MiniAsm a(t, rva);
+            a.b(0x48); a.b(0x8B); a.b(0x01);           // rax = len
+            a.b(0x4C); a.b(0x8B); a.b(0x49); a.b(0x10); // r9 = data
+            a.b(0x4D); a.b(0x31); a.b(0xC0);           // xor r8, r8
+            a.label("sl");
+            a.b(0x4C); a.b(0x39); a.b(0xC0);           // cmp rax, r8
+            a.jleShort("no");
+            a.b(0x4F); a.b(0x8B); a.b(0x14); a.b(0xC1); // r10 = [r9+r8*8]
+            a.b(0x49); a.b(0x39); a.b(0xD2);           // cmp r10, rdx
+            a.jeShort("yes");
+            a.b(0x49); a.b(0xFF); a.b(0xC0);           // inc r8
+            a.jmpShort("sl");
+            a.label("yes");
+            a.b(0xB8); a.b(0x01); a.b(0x00); a.b(0x00); a.b(0x00);
+            a.b(0xC3);
+            a.label("no");
+            a.b(0x31); a.b(0xC0);
+            a.b(0xC3);
+            a.finalize();
+        }
+
+        // Phase 31.3 -- vayu_list_slice(lst, a, b) -> new list.
+        // Uses vayu_list_new + vayu_list_get + vayu_list_push so the
+        // element-copy loop is reused.
+        void emitListSlice(std::vector<uint8_t>& t, uint32_t rva,
+            uint32_t listNewRva, uint32_t listGetRva,
+            uint32_t listPushRva, uint32_t listLenRva) {
+            MiniAsm a(t, rva);
+            a.b(0x55); a.b(0x48); a.b(0x89); a.b(0xE5);
+            a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x50);
+            a.b(0x48); a.b(0x89); a.b(0x4D); a.b(0xF8); // [rbp-8]  = lst
+            a.b(0x48); a.b(0x89); a.b(0x55); a.b(0xF0); // [rbp-16] = a
+            a.b(0x4C); a.b(0x89); a.b(0x45); a.b(0xE8); // [rbp-24] = b
+            // len = vayu_list_len(lst)
+            a.callText(listLenRva);
+            a.b(0x48); a.b(0x89); a.b(0x45); a.b(0xE0); // [rbp-32] = len
+            // Clamp a
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF0);
+            a.b(0x48); a.b(0x85); a.b(0xC9);
+            a.jnsShort("a_nn");
+            a.b(0x48); a.b(0x31); a.b(0xC9);
+            a.label("a_nn");
+            a.b(0x48); a.b(0x3B); a.b(0x4D); a.b(0xE0);
+            a.jleShort("a_ok");
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xE0);
+            a.label("a_ok");
+            a.b(0x48); a.b(0x89); a.b(0x4D); a.b(0xF0);
+            // Clamp b
+            a.b(0x48); a.b(0x8B); a.b(0x55); a.b(0xE8);
+            a.b(0x48); a.b(0x3B); a.b(0x55); a.b(0xF0);
+            a.jgeShort("b_ge_a");
+            a.b(0x48); a.b(0x8B); a.b(0x55); a.b(0xF0);
+            a.label("b_ge_a");
+            a.b(0x48); a.b(0x3B); a.b(0x55); a.b(0xE0);
+            a.jleShort("b_ok");
+            a.b(0x48); a.b(0x8B); a.b(0x55); a.b(0xE0);
+            a.label("b_ok");
+            a.b(0x48); a.b(0x89); a.b(0x55); a.b(0xE8);
+            // new_list = vayu_list_new()
+            a.callText(listNewRva);
+            a.b(0x48); a.b(0x89); a.b(0x45); a.b(0xD8); // [rbp-40] = new
+            // i = a
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xF0);
+            a.b(0x48); a.b(0x89); a.b(0x45); a.b(0xD0); // [rbp-48] = i
+            a.label("loop");
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xD0);
+            a.b(0x48); a.b(0x3B); a.b(0x45); a.b(0xE8); // cmp i, b
+            a.jgeShort("done");
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8); // rcx = lst
+            a.b(0x48); a.b(0x8B); a.b(0x55); a.b(0xD0); // rdx = i
+            a.callText(listGetRva);
+            a.b(0x48); a.b(0x89); a.b(0x45); a.b(0xC8); // [rbp-56] = elem
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xD8); // rcx = new
+            a.b(0x48); a.b(0x8B); a.b(0x55); a.b(0xC8); // rdx = elem
+            a.callText(listPushRva);
+            a.b(0x48); a.b(0xFF); a.b(0x45); a.b(0xD0); // i++
+            a.jmpShort("loop");
+            a.label("done");
+            a.b(0x48); a.b(0x8B); a.b(0x45); a.b(0xD8);
+            a.b(0xC9); a.b(0xC3);
+            a.finalize();
+        }
+
+        // Phase 31.3 -- vayu_str_strip(s) -> new string.  Trims ASCII
+        // whitespace from both ends.  Implemented as a call to
+        // vayu_str_slice(s, start, end) after computing the bounds.
+        void emitStrStrip(std::vector<uint8_t>& t, uint32_t rva,
+            uint32_t strSliceRva) {
+            MiniAsm a(t, rva);
+            a.b(0x55); a.b(0x48); a.b(0x89); a.b(0xE5);
+            a.b(0x48); a.b(0x83); a.b(0xEC); a.b(0x30);
+            a.b(0x48); a.b(0x89); a.b(0x4D); a.b(0xF8); // [rbp-8] = s
+            // len = s[0]
+            a.b(0x48); a.b(0x8B); a.b(0x11);             // rdx = len
+            // start = 0
+            a.b(0x4D); a.b(0x31); a.b(0xC0);             // r8 = 0
+            a.label("lead");
+            a.b(0x4C); a.b(0x39); a.b(0xC2);             // cmp rdx, r8
+            a.jleShort("lead_done");
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8); // rcx = s
+            a.b(0x46); a.b(0x0F); a.b(0xB6); a.b(0x4C); a.b(0x01); a.b(0x08); // bl = s[8+r8]
+            a.b(0x80); a.b(0xFB); a.b(0x20);             // cmp bl, ' '
+            a.jeShort("lead_adv");
+            a.b(0x80); a.b(0xFB); a.b(0x09);             // cmp bl, '\t'
+            a.jeShort("lead_adv");
+            a.b(0x80); a.b(0xFB); a.b(0x0A);             // cmp bl, '\n'
+            a.jeShort("lead_adv");
+            a.b(0x80); a.b(0xFB); a.b(0x0D);             // cmp bl, '\r'
+            a.jneShort("lead_done");
+            a.label("lead_adv");
+            a.b(0x49); a.b(0xFF); a.b(0xC0);
+            a.jmpShort("lead");
+            a.label("lead_done");
+            // end = len
+            a.b(0x49); a.b(0x89); a.b(0xD1);             // r9 = len
+            a.label("trail");
+            a.b(0x4D); a.b(0x39); a.b(0xC1);             // cmp r9, r8
+            a.jleShort("trail_done");
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8);
+            a.b(0x4E); a.b(0x0F); a.b(0xB6); a.b(0x5C); a.b(0x09); a.b(0x07); // bl = s[8+(r9-1)]
+            a.b(0x80); a.b(0xFB); a.b(0x20);
+            a.jeShort("trail_adv");
+            a.b(0x80); a.b(0xFB); a.b(0x09);
+            a.jeShort("trail_adv");
+            a.b(0x80); a.b(0xFB); a.b(0x0A);
+            a.jeShort("trail_adv");
+            a.b(0x80); a.b(0xFB); a.b(0x0D);
+            a.jneShort("trail_done");
+            a.label("trail_adv");
+            a.b(0x49); a.b(0xFF); a.b(0xC9);
+            a.jmpShort("trail");
+            a.label("trail_done");
+            // Call vayu_str_slice(s, start, end)
+            a.b(0x48); a.b(0x8B); a.b(0x4D); a.b(0xF8); // rcx = s
+            a.b(0x4C); a.b(0x89); a.b(0xC2);             // rdx = r8 = start
+            a.b(0x4D); a.b(0x89); a.b(0xC8);             // r8 = r9 = end
+            a.callText(strSliceRva);
+            a.b(0xC9); a.b(0xC3);
+            a.finalize();
+        }
+
         void emitPrintList(std::vector<uint8_t>& t, uint32_t rva,
             uint32_t printIntRva, uint32_t printCharRva) {
             MiniAsm a(t, rva);
@@ -1105,16 +1267,16 @@ namespace vcb {
 
         void emitPowInt(std::vector<uint8_t>& t, uint32_t rva) {
             MiniAsm a(t, rva);
-            a.b(0xB8); a.b(0x01); a.b(0x00); a.b(0x00); a.b(0x00); // mov eax, 1
+            a.b(0xB8); a.b(0x01); a.b(0x00); a.b(0x00); a.b(0x00);
             a.label("loop");
-            a.b(0x48); a.b(0x85); a.b(0xD2);                     // test rdx, rdx
+            a.b(0x48); a.b(0x85); a.b(0xD2);
             a.jzShort("done");
-            a.b(0xF6); a.b(0xC2); a.b(0x01);                     // test dl, 1
+            a.b(0xF6); a.b(0xC2); a.b(0x01);
             a.jzShort("skip");
-            a.b(0x48); a.b(0x0F); a.b(0xAF); a.b(0xC1);          // imul rax, rcx
+            a.b(0x48); a.b(0x0F); a.b(0xAF); a.b(0xC1);
             a.label("skip");
-            a.b(0x48); a.b(0x0F); a.b(0xAF); a.b(0xC9);          // imul rcx, rcx
-            a.b(0x48); a.b(0xD1); a.b(0xEA);                     // shr rdx, 1
+            a.b(0x48); a.b(0x0F); a.b(0xAF); a.b(0xC9);
+            a.b(0x48); a.b(0xD1); a.b(0xEA);
             a.jmpShort("loop");
             a.label("done");
             a.b(0xC3);
@@ -1398,8 +1560,6 @@ namespace vcb {
             a.finalize();
         }
 
-        // Phase 31.2 -- vayu_print_tuple.  Same shape as emitPrintList,
-        // but tuple layout is [len][data] (data starts at +8).
         void emitPrintTuple(std::vector<uint8_t>& t, uint32_t rva,
             uint32_t printIntRva, uint32_t printCharRva) {
             MiniAsm a(t, rva);
@@ -1442,8 +1602,6 @@ namespace vcb {
             a.finalize();
         }
 
-        // Phase 31.2 -- vayu_set_remove(s, v).  Linear scan; on match,
-        // shift tail down by one slot and dec len.  No-op if absent.
         void emitSetRemove(std::vector<uint8_t>& t, uint32_t rva) {
             MiniAsm a(t, rva);
             a.b(0x55); a.b(0x48); a.b(0x89); a.b(0xE5);
@@ -1483,7 +1641,6 @@ namespace vcb {
             a.finalize();
         }
 
-        // Phase 31.2 -- vayu_set_clear(s): set len = 0.
         void emitSetClear(std::vector<uint8_t>& t, uint32_t rva) {
             MiniAsm a(t, rva);
             a.b(0x48); a.b(0xC7); a.b(0x01); a.b(0x00); a.b(0x00);
@@ -1790,6 +1947,8 @@ namespace vcb {
             if (s == "vayu_print_map")  return { "vayu_print_int",
                                              "vayu_print_str",
                                              "vayu_print_char" };
+            if (s == "vayu_print_tuple") return { "vayu_print_int",
+                                              "vayu_print_char" };
             if (s == "vayu_str_concat") return { "vayu_alloc" };
             if (s == "vayu_str_upper")  return { "vayu_alloc" };
             if (s == "vayu_str_lower")  return { "vayu_alloc" };
@@ -1799,8 +1958,11 @@ namespace vcb {
             if (s == "vayu_tuple_new")   return { "vayu_alloc" };
             if (s == "vayu_set_new")     return { "vayu_alloc" };
             if (s == "vayu_set_add")     return { "vayu_alloc", "vayu_list_push" };
-            if (s == "vayu_print_tuple") return { "vayu_print_int",
-                                              "vayu_print_char" };
+            // Phase 31.3.
+            if (s == "vayu_str_strip")   return { "vayu_str_slice" };
+            if (s == "vayu_list_slice")  return { "vayu_list_new",
+                                             "vayu_list_get",
+                                             "vayu_list_push" };
             (void)s;
             return {};
             };
@@ -1895,6 +2057,25 @@ namespace vcb {
         if (has("vayu_str_lower"))
             emitAndMark("vayu_str_lower", 48,
                 [&] { emitStrLower(text, textRva, allocRva); });
+        if (has("vayu_str_slice"))
+            emitAndMark("vayu_str_slice", 80,
+                [&] { emitStrSlice(text, textRva, allocRva); });
+        if (has("vayu_str_strip")) {
+            uint32_t sliceRva = 0;
+            auto it = syms.find("vayu_str_slice");
+            if (it != syms.end()) sliceRva = textRva + it->second;
+            emitAndMark("vayu_str_strip", 48,
+                [&] { emitStrStrip(text, textRva, sliceRva); });
+        }
+        if (has("vayu_int_to_str"))
+            emitAndMark("vayu_int_to_str", 80,
+                [&] { emitIntToStr(text, textRva, allocRva); });
+        if (has("vayu_bool_to_str"))
+            emitAndMark("vayu_bool_to_str", 32,
+                [&] { emitBoolToStr(text, textRva, allocRva); });
+        if (has("vayu_str_to_int"))
+            emitAndMark("vayu_str_to_int", 0,
+                [&] { emitStrToInt(text, textRva); });
 
         if (has("vayu_list_new"))
             emitAndMark("vayu_list_new", 32,
@@ -1911,6 +2092,24 @@ namespace vcb {
         if (has("vayu_list_len"))
             emitAndMark("vayu_list_len", 0,
                 [&] { emitListLen(text, textRva); });
+        if (has("vayu_list_pop"))
+            emitAndMark("vayu_list_pop", 0,
+                [&] { emitListPop(text, textRva); });
+        if (has("vayu_list_contains"))
+            emitAndMark("vayu_list_contains", 0,
+                [&] { emitListContains(text, textRva); });
+        if (has("vayu_list_slice")) {
+            auto get = syms.find("vayu_list_get");
+            auto push = syms.find("vayu_list_push");
+            auto lnew = syms.find("vayu_list_new");
+            auto llen = syms.find("vayu_list_len");
+            uint32_t gRva = (get != syms.end()) ? textRva + get->second : 0;
+            uint32_t pRva = (push != syms.end()) ? textRva + push->second : 0;
+            uint32_t nRva = (lnew != syms.end()) ? textRva + lnew->second : 0;
+            uint32_t lRva = (llen != syms.end()) ? textRva + llen->second : 0;
+            emitAndMark("vayu_list_slice", 80,
+                [&] { emitListSlice(text, textRva, nRva, gRva, pRva, lRva); });
+        }
 
         if (has("vayu_map_new"))
             emitAndMark("vayu_map_new", 32,
@@ -1935,22 +2134,14 @@ namespace vcb {
             emitAndMark("vayu_print_map", 64,
                 [&] { emitPrintMap(text, textRva, printIntRva, printStrRva,
                     printCharRva); });
+        if (has("vayu_print_tuple"))
+            emitAndMark("vayu_print_tuple", 64,
+                [&] { emitPrintTuple(text, textRva, printIntRva, printCharRva); });
 
         if (has("vayu_pow_int"))
             emitAndMark("vayu_pow_int", 0,
                 [&] { emitPowInt(text, textRva); });
-        if (has("vayu_str_slice"))
-            emitAndMark("vayu_str_slice", 80,
-                [&] { emitStrSlice(text, textRva, allocRva); });
-        if (has("vayu_int_to_str"))
-            emitAndMark("vayu_int_to_str", 80,
-                [&] { emitIntToStr(text, textRva, allocRva); });
-        if (has("vayu_bool_to_str"))
-            emitAndMark("vayu_bool_to_str", 32,
-                [&] { emitBoolToStr(text, textRva, allocRva); });
-        if (has("vayu_str_to_int"))
-            emitAndMark("vayu_str_to_int", 0,
-                [&] { emitStrToInt(text, textRva); });
+
         if (has("vayu_tuple_new"))
             emitAndMark("vayu_tuple_new", 32,
                 [&] { emitTupleNew(text, textRva, allocRva); });
@@ -1985,9 +2176,6 @@ namespace vcb {
         if (has("vayu_set_clear"))
             emitAndMark("vayu_set_clear", 0,
                 [&] { emitSetClear(text, textRva); });
-        if (has("vayu_print_tuple"))
-            emitAndMark("vayu_print_tuple", 64,
-                [&] { emitPrintTuple(text, textRva, printIntRva, printCharRva); });
 
         return syms;
     }
@@ -2018,6 +2206,8 @@ namespace vcb {
             if (s == "vayu_print_map")  return { "vayu_print_int",
                                              "vayu_print_str",
                                              "vayu_print_char" };
+            if (s == "vayu_print_tuple") return { "vayu_print_int",
+                                              "vayu_print_char" };
             if (s == "vayu_str_concat") return { "vayu_alloc" };
             if (s == "vayu_str_upper")  return { "vayu_alloc" };
             if (s == "vayu_str_lower")  return { "vayu_alloc" };
@@ -2027,6 +2217,10 @@ namespace vcb {
             if (s == "vayu_tuple_new")   return { "vayu_alloc" };
             if (s == "vayu_set_new")     return { "vayu_alloc" };
             if (s == "vayu_set_add")     return { "vayu_alloc", "vayu_list_push" };
+            if (s == "vayu_str_strip")   return { "vayu_str_slice" };
+            if (s == "vayu_list_slice")  return { "vayu_list_new",
+                                             "vayu_list_get",
+                                             "vayu_list_push" };
             (void)s;
             return {};
             };
@@ -2068,11 +2262,36 @@ namespace vcb {
         if (has("vayu_str_concat")) { mark("vayu_str_concat"); emitStrConcat(text, textRva, allocRva); }
         if (has("vayu_str_upper")) { mark("vayu_str_upper"); emitStrUpper(text, textRva, allocRva); }
         if (has("vayu_str_lower")) { mark("vayu_str_lower"); emitStrLower(text, textRva, allocRva); }
+        if (has("vayu_str_slice")) { mark("vayu_str_slice"); emitStrSlice(text, textRva, allocRva); }
+        if (has("vayu_str_strip")) {
+            uint32_t sliceRva = 0;
+            auto it = syms.find("vayu_str_slice");
+            if (it != syms.end()) sliceRva = textRva + it->second;
+            mark("vayu_str_strip");
+            emitStrStrip(text, textRva, sliceRva);
+        }
+        if (has("vayu_int_to_str")) { mark("vayu_int_to_str"); emitIntToStr(text, textRva, allocRva); }
+        if (has("vayu_bool_to_str")) { mark("vayu_bool_to_str"); emitBoolToStr(text, textRva, allocRva); }
+        if (has("vayu_str_to_int")) { mark("vayu_str_to_int"); emitStrToInt(text, textRva); }
         if (has("vayu_list_new")) { mark("vayu_list_new"); emitListNew(text, textRva, allocRva); }
         if (has("vayu_list_push")) { mark("vayu_list_push"); emitListPush(text, textRva, allocRva); }
         if (has("vayu_list_get")) { mark("vayu_list_get"); emitListGet(text, textRva); }
         if (has("vayu_list_set")) { mark("vayu_list_set"); emitListSet(text, textRva); }
         if (has("vayu_list_len")) { mark("vayu_list_len"); emitListLen(text, textRva); }
+        if (has("vayu_list_pop")) { mark("vayu_list_pop"); emitListPop(text, textRva); }
+        if (has("vayu_list_contains")) { mark("vayu_list_contains"); emitListContains(text, textRva); }
+        if (has("vayu_list_slice")) {
+            auto get = syms.find("vayu_list_get");
+            auto push = syms.find("vayu_list_push");
+            auto lnew = syms.find("vayu_list_new");
+            auto llen = syms.find("vayu_list_len");
+            uint32_t gRva = (get != syms.end()) ? textRva + get->second : 0;
+            uint32_t pRva = (push != syms.end()) ? textRva + push->second : 0;
+            uint32_t nRva = (lnew != syms.end()) ? textRva + lnew->second : 0;
+            uint32_t lRva = (llen != syms.end()) ? textRva + llen->second : 0;
+            mark("vayu_list_slice");
+            emitListSlice(text, textRva, nRva, gRva, pRva, lRva);
+        }
         if (has("vayu_map_new")) { mark("vayu_map_new"); emitMapNew(text, textRva, allocRva); }
         if (has("vayu_map_put")) { mark("vayu_map_put"); emitMapPut(text, textRva, strEqRva, allocRva); }
         if (has("vayu_map_get")) { mark("vayu_map_get"); emitMapGet(text, textRva, strEqRva); }
@@ -2080,11 +2299,8 @@ namespace vcb {
         if (has("vayu_map_len")) { mark("vayu_map_len"); emitMapLen(text, textRva); }
         if (has("vayu_print_list")) { mark("vayu_print_list"); emitPrintList(text, textRva, printIntRva, printCharRva); }
         if (has("vayu_print_map")) { mark("vayu_print_map"); emitPrintMap(text, textRva, printIntRva, printStrRva, printCharRva); }
+        if (has("vayu_print_tuple")) { mark("vayu_print_tuple"); emitPrintTuple(text, textRva, printIntRva, printCharRva); }
         if (has("vayu_pow_int")) { mark("vayu_pow_int"); emitPowInt(text, textRva); }
-        if (has("vayu_str_slice")) { mark("vayu_str_slice"); emitStrSlice(text, textRva, allocRva); }
-        if (has("vayu_int_to_str")) { mark("vayu_int_to_str"); emitIntToStr(text, textRva, allocRva); }
-        if (has("vayu_bool_to_str")) { mark("vayu_bool_to_str"); emitBoolToStr(text, textRva, allocRva); }
-        if (has("vayu_str_to_int")) { mark("vayu_str_to_int"); emitStrToInt(text, textRva); }
         if (has("vayu_tuple_new")) { mark("vayu_tuple_new"); emitTupleNew(text, textRva, allocRva); }
         if (has("vayu_tuple_set")) { mark("vayu_tuple_set"); emitTupleSet(text, textRva); }
         if (has("vayu_tuple_get")) { mark("vayu_tuple_get"); emitTupleGet(text, textRva); }
@@ -2099,6 +2315,8 @@ namespace vcb {
         }
         if (has("vayu_set_contains")) { mark("vayu_set_contains"); emitSetContains(text, textRva); }
         if (has("vayu_set_len")) { mark("vayu_set_len"); emitListLen(text, textRva); }
+        if (has("vayu_set_remove")) { mark("vayu_set_remove"); emitSetRemove(text, textRva); }
+        if (has("vayu_set_clear")) { mark("vayu_set_clear"); emitSetClear(text, textRva); }
 
         return syms;
     }

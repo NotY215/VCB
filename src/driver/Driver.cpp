@@ -49,7 +49,7 @@ namespace vcb {
         }
 
         int cmdVersion() {
-            std::printf("vcb 0.6.2 (Phase 27 complete, no signing)\n");
+            std::printf("vcb 0.6.2 (Phase 31.3 complete)\n");
             return 0;
         }
 
@@ -73,9 +73,6 @@ namespace vcb {
 
         int cmdBuild(const std::string& input, const std::string& output,
             const std::string& target) {
-            // Create the output directory if it does not exist.  Without
-            // this, writePeAtomic / writeElfAtomic fail at fopen(tmp)
-            // with "cannot write '<out>.tmp'" when the parent is missing.
                 {
                     std::error_code ec;
                     auto parent = std::filesystem::path(output).parent_path();
@@ -113,10 +110,6 @@ namespace vcb {
                     pi.idata = &cg.idata;
                     pi.xdata = &cg.xdata;
                     pi.unwindEntries = &cg.unwindEntries;
-                    // Fixed-base image.  All references are RIP-relative or
-                    // RVAs; there are no absolute VAs in .text, so ASLR would
-                    // require a zero-entry .reloc that some Windows 11 builds
-                    // reject.  RELOCS_STRIPPED is the coherent configuration.
                     pi.enableAslr = false;
                     pi.entryOffset = cg.entryOffset;
                     pi.iatRva = cg.iatRva;
@@ -195,12 +188,11 @@ namespace vcb {
             }
         }
 
-        // ---- Linker discovery -----------------------------------------
-        // Look for tools\lld-link.exe (PE) or tools\ld.lld.exe (ELF).
+        // Look for tools/lld-link.exe (PE) or tools/ld.lld.exe (ELF).
         // Search order:
         //   1. VCB_TOOLS_DIR environment variable
         //   2. <cwd>/tools/
-        //   3. <cwd>/../tools/  up to <cwd>/../../../../tools/
+        //   3. <cwd>/../tools/ up to <cwd>/../../../../tools/
         //   4. <exe_dir>/tools/
         std::string findLinker(const char* exeName) {
             auto exists = [](const std::string& p) -> bool {
@@ -208,7 +200,7 @@ namespace vcb {
                 if (!f) return false;
                 std::fclose(f);
                 return true;
-            };
+                };
 
             if (const char* env = std::getenv("VCB_TOOLS_DIR")) {
                 std::string p = std::string(env) + "\\" + exeName;
@@ -250,10 +242,9 @@ namespace vcb {
 
             // cmd.exe /c strips the first and last quote when the
             // command line starts with a quote AND contains more than
-            // two quotes (handoff pitfall #7).  Two fixes:
-            //   - if the linker path has no spaces, do not quote it;
-            //   - if it does, prefix the whole thing with `call `.
-            // Both keep the command line from starting with a quote.
+            // two quotes (handoff pitfall #7).  Fix: if the linker
+            // path has no spaces, do not quote it; if it does, prefix
+            // the whole thing with `call `.
             auto shellQuote = [](const std::string& s) -> std::string {
                 return (s.find(' ') == std::string::npos)
                     ? s
@@ -285,10 +276,9 @@ namespace vcb {
                     return 1;
                 }
                 std::string e = entry.empty() ? "vayu_entry" : entry;
-                // -e sets the entry symbol.  The object has no external
-                // dependencies, so no other flags are required.  Do NOT
-                // pass --no-dynamic-linker: that is a GNU ld option and
-                // ld.lld rejects it with exit code 1.
+                // -e sets the entry symbol.  No other flags needed.
+                // Do NOT pass --no-dynamic-linker: that is a GNU ld
+                // option and ld.lld rejects it with exit 1.
                 cmd = shellQuote(lld) + " -o \"" + output + "\""
                     + " \"" + input + "\""
                     + " -e " + e;
